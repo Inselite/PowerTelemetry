@@ -40,7 +40,8 @@ struct DashboardView: View {
     private var yDomain: ClosedRange<Double> {
         let peak = displaySamples.map { max($0.totalInW, $0.loadW, $0.batteryW, 0) }.max() ?? 0
         let trough = displaySamples.map { $0.batteryW }.min() ?? 0
-        let top = max((peak * 1.15 / 5).rounded(.up) * 5, 10)
+        var top = max((peak * 1.15 / 5).rounded(.up) * 5, 10)
+        if latest?.onAC == true { top = max(top, adapterMax + 5) } // keep ceiling visible on AC
         let bottom = trough < 0 ? (trough * 1.15 / 5).rounded(.down) * 5 : 0
         return bottom...top
     }
@@ -224,23 +225,23 @@ struct DashboardView: View {
                 ForEach(displaySamples) { s in
                 LineMark(x: .value("t", s.date), y: .value("w", max(s.totalInW, 0)))
                     .foregroundStyle(Color.ptAdapter)
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(.monotone)
                 AreaMark(x: .value("t", s.date), y: .value("w", max(s.totalInW, 0)))
                     .foregroundStyle(Color.ptAdapter.opacity(0.08))
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(.monotone)
                 LineMark(x: .value("t", s.date), y: .value("w", s.batteryW))
                     .foregroundStyle(Color.ptCharge)
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(.monotone)
                 LineMark(x: .value("t", s.date), y: .value("w", max(s.loadW, 0)))
                     .foregroundStyle(Color.ptLoad)
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(.monotone)
                 }
                 if yDomain.lowerBound < 0 {
                     RuleMark(y: .value("zero", 0))
                         .foregroundStyle(Color.ptBorder)
                         .lineStyle(StrokeStyle(lineWidth: 1))
                 }
-                if latest?.onAC == true, adapterMax <= yDomain.upperBound {
+                if latest?.onAC == true {
                     RuleMark(y: .value("ceiling", adapterMax))
                         .foregroundStyle(Color.ptAdapter.opacity(0.4))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
@@ -288,10 +289,10 @@ struct DashboardView: View {
             Chart(displaySamples) { s in
                 LineMark(x: .value("t", s.date), y: .value("p", s.pct))
                     .foregroundStyle(Color.ptOk)
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(.monotone)
                 AreaMark(x: .value("t", s.date), y: .value("p", s.pct))
                     .foregroundStyle(Color.ptOk.opacity(0.08))
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(.monotone)
             }
             .chartYScale(domain: 0...100)
             .chartXAxis {
