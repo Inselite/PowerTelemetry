@@ -23,8 +23,8 @@ struct PowerTelemetryApp: App {
         Window("Power Telemetry", id: "main") {
             DashboardView()
                 .environmentObject(store)
-                .frame(minWidth: 520, idealWidth: 760, minHeight: 520, idealHeight: 680)
+                .frame(minWidth: 520, idealWidth: 760, minHeight: 700, idealHeight: 740)
         }
-        .defaultSize(width: 760, height: 680)
+        .defaultSize(width: 760, height: 740)
     }
 }

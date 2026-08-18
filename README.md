@@ -1,49 +1,96 @@
 # Power Telemetry
 
-A native macOS menu bar app that shows real-time power telemetry for Apple Silicon
-MacBooks: adapter output, battery charge/discharge power, system load, and charge
-level — sampled at 1 Hz, no sudo, no dependencies.
+Power Telemetry is a native macOS menu bar utility for monitoring live power flow on supported MacBooks.
 
-## Build & run
+It reads power data directly from IOKit and displays adapter output, system load, battery charge or discharge power, and battery level. No administrator privileges, kernel extensions, background service, or network connection are required.
 
-```bash
-swift run                # dev run
-./scripts/make_app.sh    # produces PowerTelemetry.app
-open PowerTelemetry.app
-```
+## Features
 
-Or open `Package.swift` in Xcode and press Run.
+- Live wattage in the macOS menu bar
+- Adapter output, system load, and signed battery power at 1 Hz
+- Battery charging above zero and discharging below zero
+- Dynamic chart scale with a negotiated adapter-ceiling reference
+- Time ranges for the last 1 minute, 1 hour, 4 hours, or the current session
+- Smooth, continuously moving time axis
+- Resizable detailed window in addition to the menu bar popover
+- Native macOS controls and semantic system colors for Light and Dark appearances
+- VoiceOver labels for metrics and charts
+- Up to 12 hours of in-memory history
 
-The app lives in the menu bar (no Dock icon). Click the wattage readout to open
-the dashboard popover.
+## Installation
 
-## What the numbers mean
+Download the latest zip from [Releases](https://github.com/Inselite/PowerTelemetry/releases), extract it, and move `PowerTelemetry.app` to Applications.
+
+Current builds are ad-hoc signed and are not notarized by Apple. On first launch, macOS may require:
+
+1. Right-click `PowerTelemetry.app`
+2. Select **Open**
+3. Confirm **Open**
+
+The app runs in the menu bar and does not add a Dock icon.
+
+## Compatibility
+
+Power Telemetry requires macOS 14 or later.
+
+The current implementation reads the `AppleSmartBattery` IOKit service and its `PowerTelemetryData`, `InstantAmperage`, and `AdapterDetails` fields.
+
+| System | Status |
+|---|---|
+| Apple Silicon MacBook Pro used for development | Tested |
+| Other Apple Silicon MacBooks exposing the same IOKit fields | Expected to work, not yet broadly verified |
+| Intel MacBooks | Unknown; telemetry fields may differ |
+| Desktop Macs without a battery | Not supported; the app displays an unavailable state |
+
+Compatibility reports are welcome. Include the Mac model, macOS version, and which metrics are missing or incorrect.
+
+## Metrics
 
 | Metric | Meaning |
 |---|---|
-| Adapter output | Power the charger is currently delivering (ceiling = negotiated watts, e.g. 140 W) |
-| Battery charge power | Positive: charging. Negative (amber): battery is supplementing the adapter during load spikes |
-| System load | What the Mac itself is consuming (CPU + GPU + ANE + platform) |
-| Battery level | Charge %, with ETA or "holding at 80%" when optimized charging is active |
+| Adapter output | Power currently entering the system from the connected adapter |
+| Adapter ceiling | Negotiated maximum adapter power, such as 140 W |
+| System load | Power consumed by the Mac, including CPU, GPU, ANE, memory, storage, display, and platform components |
+| Battery power | Positive values mean charging; negative values mean the battery is supplementing the adapter or powering the Mac |
+| Battery level | Current state of charge, including optimized-charging hold states when detectable |
 
-## Sharing with friends
+The values come from Apple's internal power telemetry and may differ slightly from measurements taken at the wall because of adapter conversion losses and sampling time.
 
-The bundled `PowerTelemetry.app` is ad-hoc signed. Friends on Apple Silicon Macs
-(macOS 14+) can run it, but Gatekeeper will warn on first launch:
-**right-click → Open → Open**.
+## Privacy
 
-For a warning-free install you need a paid Apple Developer account ($99/yr), then:
+All telemetry is read locally. Power Telemetry does not use the network and does not write measurement history to disk. Samples remain in memory and are discarded when the app exits.
+
+## Build from source
+
+Requirements:
+
+- Xcode with the macOS SDK
+- Swift 5.9 or later
 
 ```bash
-codesign --force --deep --options runtime \
-  --sign "Developer ID Application: Your Name (TEAMID)" PowerTelemetry.app
-xcrun notarytool submit PowerTelemetry.zip --apple-id you@example.com --team-id TEAMID --wait
-xcrun stapler staple PowerTelemetry.app
+git clone https://github.com/Inselite/PowerTelemetry.git
+cd PowerTelemetry
+./scripts/make_app.sh
+open PowerTelemetry.app
 ```
 
-## Notes
+For development, open `Package.swift` in Xcode or run:
 
-- Data source: IOKit `AppleSmartBattery` registry (`PowerTelemetryData`,
-  `InstantAmperage`, `AdapterDetails`). No elevated privileges required.
-- Intel Macs expose different fields; this app targets Apple Silicon.
-- History is kept for 1 hour (3,600 samples) in memory; nothing is written to disk.
+```bash
+swift run
+```
+
+The icon can be regenerated from source with:
+
+```bash
+swift scripts/make_icon.swift .
+iconutil -c icns AppIcon.iconset
+```
+
+## Technical notes
+
+- Sampling interval: 1 second
+- Visual chart refresh: 5 Hz
+- Maximum retained history: 12 hours
+- Runtime dependencies: none
+- Elevated privileges: not required

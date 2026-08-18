@@ -7,9 +7,10 @@ struct DashboardView: View {
     @State private var range: TimeRange = .hour
 
     private enum TimeRange: String, CaseIterable {
-        case hour = "1 h", fourHours = "4 h", all = "All"
+        case minute = "1 m", hour = "1 h", fourHours = "4 h", all = "All"
         var cutoff: TimeInterval? {
             switch self {
+            case .minute: return 60
             case .hour: return 3600
             case .fourHours: return 14400
             case .all: return nil
@@ -37,13 +38,23 @@ struct DashboardView: View {
 
     /// Dynamic y-domain: data peak + 15% headroom, snapped to 5 W, floored at 10 W.
     /// Extends below zero when the battery discharges (negative battery power).
-    private var yDomain: ClosedRange<Double> {
-        let peak = displaySamples.map { max($0.totalInW, $0.loadW, $0.batteryW, 0) }.max() ?? 0
-        let trough = displaySamples.map { $0.batteryW }.min() ?? 0
+    private func yDomain(for samples: [PowerSample]) -> ClosedRange<Double> {
+        let peak = samples.map { max($0.totalInW, $0.loadW, $0.batteryW, 0) }.max() ?? 0
+        let trough = samples.map { $0.batteryW }.min() ?? 0
         var top = max((peak * 1.15 / 5).rounded(.up) * 5, 10)
         if latest?.onAC == true { top = max(top, adapterMax + 5) } // keep ceiling visible on AC
         let bottom = trough < 0 ? (trough * 1.15 / 5).rounded(.down) * 5 : 0
         return bottom...top
+    }
+
+    /// Explicit moving time window. TimelineView updates this domain without morphing
+    /// the measured power values into their previous geometry.
+    private func xDomain(endingAt end: Date) -> ClosedRange<Date> {
+        if let cutoff = range.cutoff {
+            return end.addingTimeInterval(-cutoff)...end
+        }
+        let start = store.samples.first?.date ?? end.addingTimeInterval(-60)
+        return min(start, end.addingTimeInterval(-1))...end
     }
 
     var body: some View {
@@ -98,12 +109,10 @@ struct DashboardView: View {
                     .foregroundStyle(Color.ptFaint)
             }
             Spacer()
-            HStack(spacing: 6) {
-                Circle().fill(Color.ptOk).frame(width: 6, height: 6)
-                Text(latest?.date.formatted(date: .omitted, time: .standard) ?? "—")
-                    .font(.ptDetail)
-                    .foregroundStyle(Color.ptDim)
-            }
+            Circle()
+                .fill(Color.ptOk)
+                .frame(width: 6, height: 6)
+                .accessibilityLabel("Live telemetry")
         }
         .padding(.bottom, 12)
     }
@@ -155,7 +164,7 @@ struct DashboardView: View {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(signed && value < -0.5 ? "−\(Int(abs(value)))" : "\(Int(value))")
                     .font(.ptValue)
-                    .foregroundStyle(signed && value < -0.5 ? Color.ptAdapter : Color.ptText)
+                    .foregroundStyle(signed && abs(value) > 0.5 ? color : Color.ptText)
                 Text(unit)
                     .font(.system(size: 12))
                     .foregroundStyle(Color.ptFaint)
@@ -198,7 +207,9 @@ struct DashboardView: View {
     // MARK: Charts
 
     private var powerChart: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let samples = displaySamples
+        let domain = yDomain(for: samples)
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Power flow").font(.system(size: 12, weight: .semibold)).foregroundStyle(Color.ptText)
                 Spacer()
@@ -207,7 +218,7 @@ struct DashboardView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 150)
+                .frame(width: 190)
                 Button {
                     NSApp.activate()
                     openWindow(id: "main")
@@ -221,8 +232,9 @@ struct DashboardView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Enlarge power flow chart")
             }
-            Chart {
-                ForEach(displaySamples) { s in
+            TimelineView(.periodic(from: .now, by: 0.2)) { timeline in
+                Chart {
+                    ForEach(samples) { s in
                 LineMark(x: .value("t", s.date), y: .value("w", max(s.totalInW, 0)))
                     .foregroundStyle(Color.ptAdapter)
                     .interpolationMethod(.monotone)
@@ -236,7 +248,7 @@ struct DashboardView: View {
                     .foregroundStyle(Color.ptLoad)
                     .interpolationMethod(.monotone)
                 }
-                if yDomain.lowerBound < 0 {
+                if domain.lowerBound < 0 {
                     RuleMark(y: .value("zero", 0))
                         .foregroundStyle(Color.ptBorder)
                         .lineStyle(StrokeStyle(lineWidth: 1))
@@ -245,15 +257,16 @@ struct DashboardView: View {
                     RuleMark(y: .value("ceiling", adapterMax))
                         .foregroundStyle(Color.ptAdapter.opacity(0.4))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                        .annotation(position: .top, alignment: .trailing) {
+                        .annotation(position: .bottom, alignment: .trailing) {
                             Text("\(Int(adapterMax)) W ceiling")
                                 .font(.ptDetail)
                                 .foregroundStyle(Color.ptAdapter.opacity(0.7))
                         }
                 }
             }
-            .chartYScale(domain: yDomain)
-            .chartXAxis {
+                .chartYScale(domain: domain)
+                .chartXScale(domain: xDomain(endingAt: timeline.date))
+                .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: 5)) { _ in
                     AxisValueLabel(format: .dateTime.hour().minute())
                         .font(.ptDetail)
@@ -266,14 +279,13 @@ struct DashboardView: View {
                     AxisValueLabel().font(.ptDetail).foregroundStyle(Color.ptFaint)
                 }
             }
-            .frame(minHeight: 190, maxHeight: .infinity)
-            // tween the per-second slide so the window scrolls continuously
-            .animation(.linear(duration: 1), value: displaySamples.last?.date)
-            .animation(.easeOut(duration: 0.3), value: range)
-            .accessibilityLabel("Power flow chart")
-            .accessibilityValue(latest.map {
-                "Adapter \(Int($0.totalInW)) watts, system load \(Int($0.loadW)) watts, battery \($0.batteryW < -0.5 ? "discharging" : "charging") \(Int(abs($0.batteryW))) watts"
-            } ?? "no data")
+                .frame(minHeight: 190, maxHeight: .infinity)
+                .animation(.easeOut(duration: 0.3), value: range)
+                .accessibilityLabel("Power flow chart")
+                .accessibilityValue(latest.map {
+                    "Adapter \(Int($0.totalInW)) watts, system load \(Int($0.loadW)) watts, battery \($0.batteryW < -0.5 ? "discharging" : "charging") \(Int(abs($0.batteryW))) watts"
+                } ?? "no data")
+            }
             legend([
                 ("Adapter output", Color.ptAdapter),
                 ("Battery +charge / −discharge", Color.ptCharge),
@@ -284,9 +296,11 @@ struct DashboardView: View {
     }
 
     private var batteryChart: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let samples = displaySamples
+        return VStack(alignment: .leading, spacing: 8) {
             panelTitle("Battery level", detail: "percent")
-            Chart(displaySamples) { s in
+            TimelineView(.periodic(from: .now, by: 0.2)) { timeline in
+                Chart(samples) { s in
                 LineMark(x: .value("t", s.date), y: .value("p", s.pct))
                     .foregroundStyle(Color.ptOk)
                     .interpolationMethod(.monotone)
@@ -294,8 +308,9 @@ struct DashboardView: View {
                     .foregroundStyle(Color.ptOk.opacity(0.08))
                     .interpolationMethod(.monotone)
             }
-            .chartYScale(domain: 0...100)
-            .chartXAxis {
+                .chartYScale(domain: 0...100)
+                .chartXScale(domain: xDomain(endingAt: timeline.date))
+                .chartXAxis {
                 AxisMarks(values: .automatic(desiredCount: 5)) { _ in
                     AxisValueLabel(format: .dateTime.hour().minute())
                         .font(.ptDetail)
@@ -308,11 +323,11 @@ struct DashboardView: View {
                     AxisValueLabel().font(.ptDetail).foregroundStyle(Color.ptFaint)
                 }
             }
-            .frame(height: 90)
-            .animation(.linear(duration: 1), value: displaySamples.last?.date)
-            .animation(.easeOut(duration: 0.3), value: range)
-            .accessibilityLabel("Battery level chart")
-            .accessibilityValue(latest.map { "\(Int($0.pct)) percent" } ?? "no data")
+                .frame(height: 90)
+                .animation(.easeOut(duration: 0.3), value: range)
+                .accessibilityLabel("Battery level chart")
+                .accessibilityValue(latest.map { "\(Int($0.pct)) percent" } ?? "no data")
+            }
         }
         .panelStyle()
     }
