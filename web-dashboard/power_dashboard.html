@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Power Telemetry — MacBook Pro 16</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0e1114;
+    --surface: #14181c;
+    --border: #242a30;
+    --text: #e4e8ec;
+    --text-dim: #9aa4ad;
+    --text-faint: #5f6a73;
+    --accent: #d9932c;        /* adapter / warnings */
+    --charge: #6b8fd4;        /* battery charge */
+    --load: #97a0ab;          /* system load — neutral, it is the baseline */
+    --ok: #4e9a6c;
+    --mono: "IBM Plex Mono", "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-font-smoothing: antialiased; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 14px; line-height: 1.5;
+    padding: 32px 24px 48px; max-width: 1160px; margin: 0 auto;
+  }
+
+  /* ── Header ─────────────────────────────── */
+  header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding-bottom: 20px; margin-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap; gap: 8px;
+  }
+  .wordmark { display: flex; align-items: center; gap: 10px; }
+  .wordmark svg { display: block; color: var(--accent); }
+  .wordmark h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
+  .wordmark .sub { font-size: 12px; color: var(--text-faint); font-weight: 400; }
+  .conn {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+  }
+  .conn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+  .conn.stale .dot { background: var(--accent); }
+
+  /* ── Metric strip ───────────────────────── */
+  .metrics {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1px; background: var(--border);
+    border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+    margin-bottom: 32px;
+  }
+  .metric { background: var(--surface); padding: 18px 20px 16px; }
+  .metric .label {
+    font-size: 11px; font-weight: 500; color: var(--text-faint);
+    text-transform: uppercase; letter-spacing: 0.07em;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .metric .label .swatch { width: 8px; height: 2px; border-radius: 1px; }
+  .metric .value {
+    font-family: var(--mono); font-size: 30px; font-weight: 500;
+    font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+    margin-top: 6px; color: var(--text);
+  }
+  .metric .value .unit { font-size: 14px; color: var(--text-faint); margin-left: 2px; }
+  .metric .value.negative { color: var(--accent); }
+  .metric .detail {
+    font-family: var(--mono); font-size: 11px; color: var(--text-dim); margin-top: 3px;
+    min-height: 16px;
+  }
+  .meter { height: 3px; background: #1e242a; border-radius: 2px; margin-top: 10px; overflow: hidden; }
+  .meter .bar {
+    height: 100%; background: var(--accent); border-radius: 2px;
+    width: 100%; transform: scaleX(0); transform-origin: left center;
+    transition: transform 0.6s ease-out;
+  }
+
+  /* ── Charts ─────────────────────────────── */
+  .panel {
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); padding: 20px; margin-bottom: 24px;
+  }
+  .panel-head {
+    display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px;
+  }
+  .panel-head h2 { font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: 0.01em; }
+  .panel-head .range { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+  .chart-wrap { position: relative; height: 300px; }
+  .chart-wrap.short { height: 160px; }
+
+  footer {
+    margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--text-faint); line-height: 1.7; max-width: 75ch;
+  }
+  footer code { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wordmark">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M9 1L3 9h4l-1 6 6-8H8l1-6z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+    </svg>
+    <h1>Power Telemetry <span class="sub">— MacBook Pro 16 · M5 Max · 140W USB-PD</span></h1>
+  </div>
+  <div class="conn" id="connWrap">
+    <span class="dot"></span>
+    <span id="conn">connecting</span>
+    <span style="color:var(--text-faint)">·</span>
+    <span id="lastUpdate">—</span>
+  </div>
+</header>
+
+<div class="metrics">
+  <div class="metric">
+    <div class="label"><span class="swatch" style="background:var(--accent)"></span>Adapter output</div>
+    <div class="value" id="vTotal">—<span class="unit">W</span></div>
+    <div class="detail" id="vTotalPct">of 140 W negotiated</div>
+    <div class="meter"><div class="bar" id="pTotal"></div></div>
+  </div>
+  <div class="metric">
+    <div class="label"><span class="swatch" style="background:var(--charge)"></span>Battery charge power</div>
+    <div class="value" id="vBatt">—<span class="unit">W</span></div>
+    <div class="detail" id="vBattA">&nbsp;</div>
+  </div>
+  <div class="metric">
+    <div class="label"><span class="swatch" style="background:var(--load)"></span>System load</div>
+    <div class="value" id="vLoad">—<span class="unit">W</span></div>
+    <div class="detail">CPU · GPU · ANE · platform</div>
+  </div>
+  <div class="metric">
+    <div class="label"><span class="swatch" style="background:var(--ok)"></span>Battery level</div>
+    <div class="value" id="vPct">—<span class="unit">%</span></div>
+    <div class="detail" id="vEta">estimating…</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>Power flow</h2>
+    <span class="range">watts · 1s resolution</span>
+  </div>
+  <div class="chart-wrap"><canvas id="powerChart"></canvas></div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>Battery level</h2>
+    <span class="range">percent</span>
+  </div>
+  <div class="chart-wrap short"><canvas id="pctChart"></canvas></div>
+</div>
+
+<footer>
+  Charge power tapers as the battery fills; expect the adapter output to fall toward system load
+  past 80%. Negative battery power (amber) indicates the system is supplementing the adapter
+  from the battery during load spikes. Source: <code>/tmp/power_log.csv</code>, sampled at 1 Hz.
+</footer>
+
+<script>
+const MAX_POINTS = 7200;
+let powerChart, pctChart;
+let history = [];
+
+const FONT = { family: "'IBM Plex Mono', 'SF Mono', ui-monospace, Menlo, monospace", size: 10 };
+const GRID = '#1c2228', TICK = '#5f6a73';
+
+function mkChart(ctx, datasets, ymax) {
+  return new Chart(ctx, {
+    type: 'line',
+    data: { labels: [], datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { ticks: { color: TICK, maxTicksLimit: 10, font: FONT },
+             grid: { color: 'transparent' }, border: { color: GRID } },
+        y: { min: 0, max: ymax,
+             ticks: { color: TICK, font: FONT, padding: 8 },
+             grid: { color: GRID, drawTicks: false }, border: { display: false } }
+      },
+      plugins: {
+        legend: { position: 'top', align: 'end', labels: {
+          color: '#9aa4ad', boxWidth: 14, boxHeight: 2,
+          font: { family: "'IBM Plex Sans', sans-serif", size: 11 }, padding: 16 } },
+        tooltip: {
+          backgroundColor: '#1a1f24', borderColor: '#2a3138', borderWidth: 1,
+          titleColor: '#9aa4ad', bodyColor: '#e4e8ec',
+          titleFont: { ...FONT, size: 10 }, bodyFont: { ...FONT, size: 11 },
+          padding: 10, cornerRadius: 6, displayColors: true, boxWidth: 8, boxHeight: 2,
+          callbacks: { label: c => ` ${c.dataset.label}: ${c.parsed.y.toFixed(1)} W` }
+        }
+      },
+      elements: { point: { radius: 0, hitRadius: 6 }, line: { borderWidth: 1.5 } }
+    }
+  });
+}
+
+function init() {
+  const ds = (label, color, fillAlpha) => ({
+    label, data: [], borderColor: color,
+    backgroundColor: fillAlpha ? color + fillAlpha : 'transparent',
+    fill: !!fillAlpha, tension: 0.25
+  });
+  powerChart = mkChart(document.getElementById('powerChart'), [
+    ds('Adapter output', '#d9932c', '14'),
+    ds('Battery charge', '#6b8fd4', '0d'),
+    ds('System load', '#97a0ab', null),
+  ], 145);
+  pctChart = mkChart(document.getElementById('pctChart'), [
+    ds('Battery level %', '#4e9a6c', '14'),
+  ], 100);
+  pctChart.options.plugins.tooltip.callbacks.label = c => ` ${c.parsed.y.toFixed(0)} %`;
+}
+
+function setValue(id, num, unit, digits = 0) {
+  document.getElementById(id).innerHTML =
+    num.toFixed(digits) + `<span class="unit">${unit}</span>`;
+}
+
+function push(d) {
+  history.push(d);
+  if (history.length > MAX_POINTS) {
+    history.shift();
+    powerChart.data.labels.shift();
+    pctChart.data.labels.shift();
+    powerChart.data.datasets.forEach(s => s.data.shift());
+    pctChart.data.datasets.forEach(s => s.data.shift());
+  }
+  powerChart.data.labels.push(d.ts);
+  powerChart.data.datasets[0].data.push(Math.max(d.total, 0));
+  powerChart.data.datasets[1].data.push(Math.max(d.batt, 0));
+  powerChart.data.datasets[2].data.push(Math.max(d.load, 0));
+  pctChart.data.labels.push(d.ts);
+  pctChart.data.datasets[0].data.push(d.pct);
+
+  setValue('vTotal', Math.max(d.total, 0), 'W');
+  document.getElementById('vTotalPct').textContent =
+    Math.round(d.total / 140 * 100) + '% of 140 W negotiated';
+  document.getElementById('pTotal').style.transform =
+    'scaleX(' + Math.min(Math.max(d.total / 140, 0), 1) + ')';
+
+  const battEl = document.getElementById('vBatt');
+  const ampOk = Math.abs(d.amp) > 0.05 && Math.abs(d.amp) < 100; // physical range ~±15A; 0 = stale telemetry
+  if (d.batt < -0.5) {
+    battEl.innerHTML = '−' + Math.abs(d.batt).toFixed(0) + '<span class="unit">W</span>';
+    battEl.classList.add('negative');
+    document.getElementById('vBattA').textContent =
+      'discharging' + (ampOk ? ' at ' + Math.abs(d.amp).toFixed(1) + ' A' : ' — supplementing adapter');
+  } else {
+    battEl.innerHTML = d.batt.toFixed(0) + '<span class="unit">W</span>';
+    battEl.classList.remove('negative');
+    document.getElementById('vBattA').textContent = ampOk
+      ? d.amp.toFixed(1) + ' A into cells' : 'current nominal';
+  }
+
+  setValue('vLoad', Math.max(d.load, 0), 'W');
+  setValue('vPct', d.pct, '%');
+  document.getElementById('lastUpdate').textContent = d.ts;
+
+  const cutoff = history.length - 300;
+  const etaEl = document.getElementById('vEta');
+  if (d.pct >= 100) {
+    etaEl.textContent = 'fully charged';
+  } else if (cutoff > 0) {
+    const old = history[cutoff];
+    const rate = (d.pct - old.pct) / ((history.length - cutoff) / 60);
+    if (rate > 0.01) {
+      const mins = Math.round((100 - d.pct) / rate);
+      etaEl.textContent = `≈ ${Math.floor(mins/60)} h ${mins%60} min to full`;
+    } else if (d.pct >= 79 && d.pct <= 81) {
+      etaEl.textContent = 'holding at 80% — optimized charging';
+    } else {
+      etaEl.textContent = 'on hold';
+    }
+  }
+}
+
+let updatePending = false;
+function scheduleUpdate() {
+  if (updatePending) return;
+  updatePending = true;
+  requestAnimationFrame(() => {
+    powerChart.update('none');
+    pctChart.update('none');
+    updatePending = false;
+  });
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch('power_log.csv?t=' + Date.now());
+    const text = await res.text();
+    text.trim().split('\n').slice(1).forEach(l => {
+      const [ts, pct, load, batt, total, amp] = l.split(',');
+      if (ts && [pct, load, batt, total, amp].every(v => Math.abs(+v) < 1e6))
+        push({ ts, pct: +pct, load: +load, batt: +batt, total: +total, amp: +amp });
+    });
+    scheduleUpdate();
+  } catch (e) { console.error('history load failed', e); }
+}
+
+function connect() {
+  const es = new EventSource('/events');
+  const connEl = document.getElementById('conn');
+  const wrap = document.getElementById('connWrap');
+  es.onopen = () => { connEl.textContent = 'live'; wrap.classList.remove('stale'); };
+  es.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    // skip backlog samples already loaded from CSV (ts is HH:MM:SS, lexicographic works)
+    if (history.length && d.ts <= history[history.length-1].ts) return;
+    push(d);
+    scheduleUpdate();
+  };
+  es.onerror = () => {
+    connEl.textContent = 'reconnecting';
+    wrap.classList.add('stale');
+    es.close();
+    setTimeout(connect, 3000);
+  };
+}
+
+init();
+loadHistory().then(connect);
+</script>
+</body>
+</html>
