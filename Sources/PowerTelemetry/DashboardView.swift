@@ -36,10 +36,13 @@ struct DashboardView: View {
     }
 
     /// Dynamic y-domain: data peak + 15% headroom, snapped to 5 W, floored at 10 W.
+    /// Extends below zero when the battery discharges (negative battery power).
     private var yDomain: ClosedRange<Double> {
         let peak = displaySamples.map { max($0.totalInW, $0.loadW, $0.batteryW, 0) }.max() ?? 0
+        let trough = displaySamples.map { $0.batteryW }.min() ?? 0
         let top = max((peak * 1.15 / 5).rounded(.up) * 5, 10)
-        return 0...top
+        let bottom = trough < 0 ? (trough * 1.15 / 5).rounded(.down) * 5 : 0
+        return bottom...top
     }
 
     var body: some View {
@@ -225,17 +228,27 @@ struct DashboardView: View {
                 AreaMark(x: .value("t", s.date), y: .value("w", max(s.totalInW, 0)))
                     .foregroundStyle(Color.ptAdapter.opacity(0.08))
                     .interpolationMethod(.catmullRom)
-                LineMark(x: .value("t", s.date), y: .value("w", max(s.batteryW, 0)))
+                LineMark(x: .value("t", s.date), y: .value("w", s.batteryW))
                     .foregroundStyle(Color.ptCharge)
                     .interpolationMethod(.catmullRom)
                 LineMark(x: .value("t", s.date), y: .value("w", max(s.loadW, 0)))
                     .foregroundStyle(Color.ptLoad)
                     .interpolationMethod(.catmullRom)
                 }
+                if yDomain.lowerBound < 0 {
+                    RuleMark(y: .value("zero", 0))
+                        .foregroundStyle(Color.ptBorder)
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                }
                 if latest?.onAC == true, adapterMax <= yDomain.upperBound {
                     RuleMark(y: .value("ceiling", adapterMax))
                         .foregroundStyle(Color.ptAdapter.opacity(0.4))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        .annotation(position: .top, alignment: .trailing) {
+                            Text("\(Int(adapterMax)) W ceiling")
+                                .font(.ptDetail)
+                                .foregroundStyle(Color.ptAdapter.opacity(0.7))
+                        }
                 }
             }
             .chartYScale(domain: yDomain)
@@ -262,7 +275,7 @@ struct DashboardView: View {
             } ?? "no data")
             legend([
                 ("Adapter output", Color.ptAdapter),
-                ("Battery charge", Color.ptCharge),
+                ("Battery +charge / −discharge", Color.ptCharge),
                 ("System load", Color.ptLoad),
             ])
         }
