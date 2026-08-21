@@ -21,9 +21,13 @@ final class PowerStore: ObservableObject {
 
     private func tick() {
         guard let sample = PowerSensor.read() else {
-            unsupported = true
+            // Only a Mac that has never reported is unsupported. A read can fail
+            // transiently around sleep/wake, and latching this would swap the whole
+            // dashboard for the unavailable screen until the next launch.
+            unsupported = samples.isEmpty
             return
         }
+        unsupported = false
         samples.append(sample)
         if samples.count > maxSamples {
             samples.removeFirst(samples.count - maxSamples)
