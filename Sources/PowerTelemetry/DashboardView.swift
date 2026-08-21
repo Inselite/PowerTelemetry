@@ -30,9 +30,9 @@ struct DashboardView: View {
     /// False while this copy of the dashboard is off screen — see `PausableTimeline`.
     @State private var onScreen = false
 
-    /// Once per second, matching the sampler. The charts used to redraw at 5 Hz for a
-    /// smoother sliding axis; with bars anchored to absolute time there is nothing left
-    /// to interpolate between frames, so the extra four redraws bought nothing.
+    /// Once per second, matching the sampler. The window edge snaps to bucket
+    /// boundaries (see `xDomain`), so between snaps a redraw changes nothing but the
+    /// filling bar — there is no continuous motion for a faster rate to smooth.
     private var timeline: PausableTimeline {
         PausableTimeline(interval: 1, paused: !onScreen)
     }
@@ -106,11 +106,19 @@ struct DashboardView: View {
         return 0...top
     }
 
-    /// Explicit moving time window. TimelineView updates this domain without morphing
-    /// the measured power values into their previous geometry.
+    /// The visible time window. Its edge snaps up to the next bucket boundary rather
+    /// than riding "now": with the edge on the raw clock the whole field of bars slides
+    /// left continuously — ~12 px/s at "1 m", a visible lurch per redraw. Snapped, a
+    /// bar keeps its pixels for its whole life and new bars appear in the rightmost
+    /// slot as they fill, the way the system's own battery chart behaves. The width is
+    /// an exact divisor of the cutoff, so the left edge lands on a boundary too and
+    /// bars part-visible at the edge cannot occur.
     private func xDomain(endingAt end: Date) -> ClosedRange<Date> {
         if let cutoff = range.cutoff {
-            return end.addingTimeInterval(-cutoff)...end
+            let width = range.bucket
+            let snapped = Date(timeIntervalSince1970:
+                (end.timeIntervalSince1970 / width).rounded(.up) * width)
+            return snapped.addingTimeInterval(-cutoff)...snapped
         }
         let start = store.samples.first?.date ?? end.addingTimeInterval(-60)
         return min(start, end.addingTimeInterval(-1))...end
