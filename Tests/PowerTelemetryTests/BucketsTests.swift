@@ -100,3 +100,21 @@ final class BucketedTests: XCTestCase {
         XCTAssertEqual(spare.top, 100)
     }
 }
+
+final class SensorWattsTests: XCTestCase {
+    func testMilliwattsBecomeWatts() {
+        XCTAssertEqual(PowerSensor.watts(NSNumber(value: 117_807)), 117.807, accuracy: 0.0001)
+    }
+
+    func testMissingFieldReadsZero() {
+        XCTAssertEqual(PowerSensor.watts(nil), 0)
+        XCTAssertEqual(PowerSensor.watts("not a number"), 0)
+    }
+
+    func testNegativeFlowIsFlooredAtZero() {
+        // The firmware has been seen reporting a negative SystemLoad, which reached the
+        // panel as an impossible "−50 W". A flow magnitude has no negative branch.
+        XCTAssertEqual(PowerSensor.watts(NSNumber(value: -50_000)), 0)
+        XCTAssertEqual(PowerSensor.watts(NSNumber(value: -1)), 0)
+    }
+}

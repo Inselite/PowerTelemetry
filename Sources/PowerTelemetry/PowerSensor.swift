@@ -48,9 +48,14 @@ enum PowerSensor {
         s.onAC = (d["ExternalConnected"] as? Bool) ?? false
 
         if let t = d["PowerTelemetryData"] as? [String: Any] {
-            s.loadW = num(t["SystemLoad"]) / 1000
+            // Load and adapter output are magnitudes of a flow, not signed quantities:
+            // the Mac cannot consume negative watts and an adapter cannot deliver them.
+            // `watts` clamps them, because the firmware has been seen reporting a
+            // negative SystemLoad — it reached the panel as an impossible "−50 W"
+            // system load. Battery power is the one that really is signed.
+            s.loadW = watts(t["SystemLoad"])
             s.batteryW = signed(t["BatteryPower"]) / 1000
-            s.totalInW = num(t["SystemPowerIn"]) / 1000
+            s.totalInW = watts(t["SystemPowerIn"])
         }
         s.amps = signed(d["InstantAmperage"]) / 1000
 
@@ -73,6 +78,16 @@ enum PowerSensor {
 
     private static func num(_ v: Any?) -> Double {
         (v as? NSNumber)?.doubleValue ?? 0
+    }
+
+    /// A one-directional flow, converted from milliwatts and floored at zero.
+    ///
+    /// Floored rather than passed through because a negative here is not a small
+    /// reading, it is a wrong one, and every consumer would have to defend against it
+    /// separately — the bar chart already did (`max(sample.loadW, 0)`) while the metric
+    /// cell did not, which is exactly how "−50 W" reached the panel.
+    static func watts(_ v: Any?) -> Double {
+        max(0, num(v) / 1000)
     }
 
     /// IOKit reports negative power/current as wrapped uint64 (2^64 − n).
