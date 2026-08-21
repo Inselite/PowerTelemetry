@@ -308,10 +308,10 @@ struct DashboardView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Enlarge power flow chart")
             }
-            TimelineView(.periodic(from: .now, by: 0.2)) { timeline in
+            TimelineView(.periodic(from: .now, by: 0.2)) { context in
                 Chart { powerMarks(bars, domain: domain) }
                     .chartYScale(domain: domain)
-                    .chartXScale(domain: xDomain(endingAt: timeline.date))
+                    .chartXScale(domain: xDomain(endingAt: context.date))
                     .chartOverlay { proxy in
                         GeometryReader { geo in
                             scrubber(proxy, geo, in: bars)
@@ -360,11 +360,14 @@ struct DashboardView: View {
         let spans = displaySamples.chargeSpans()
         let bars = buckets
         return VStack(alignment: .leading, spacing: 8) {
-            panelTitle("Battery level", detail: "percent")
-            TimelineView(.periodic(from: .now, by: 0.2)) { timeline in
+            panelTitle("Battery level")
+            TimelineView(.periodic(from: .now, by: 0.2)) { context in
                 Chart { batteryMarks(spans, bars) }
-                    .chartYScale(domain: 0...100)
-                    .chartXScale(domain: xDomain(endingAt: timeline.date))
+                    // The domain reaches below zero to make room for the power lane.
+                    // Drawing the lane inside the chart rather than as a view beneath it
+                    // is what keeps it aligned with the bars for free, at every range.
+                    .chartYScale(domain: Self.laneFloor...100)
+                    .chartXScale(domain: xDomain(endingAt: context.date))
                     .chartOverlay { proxy in
                         GeometryReader { geo in
                             scrubber(proxy, geo, in: bars)
@@ -373,14 +376,14 @@ struct DashboardView: View {
                     }
                     .chartXAxis { timeAxis }
                     .chartYAxis { levelAxis }
-                    .frame(height: 96)
+                    .frame(height: 112)
                     .animation(.easeOut(duration: 0.3), value: range)
                     .accessibilityLabel("Battery level chart")
                     .accessibilityValue(batterySummary)
             }
             glyphLegend([
                 ("bolt.fill", "Charging", Color.ptOk),
-                ("pause.fill", "On adapter, not charging", Color.ptFaint),
+                ("capsule.fill", "Plugged in, not charging", Color.ptOk.opacity(0.35)),
             ])
         }
         .panelStyle()
@@ -393,11 +396,59 @@ struct DashboardView: View {
             band(span)
         }
         ForEach(bars) { b in
-            bar(b, 0, b.levelPct, Color.ptOk)
+            // Red in the warning zone, the way the system marks a low battery. It is
+            // the one level worth spotting without reading the axis.
+            bar(b, 0, b.levelPct, b.levelPct < 20 ? Color.ptLow : Color.ptOk)
+        }
+        // The power lane, under the level: a bar means the adapter was connected, the
+        // bolt marks where it was actually charging. Discharge needs no mark of its own
+        // — it is the stretch where the lane is empty and the level walks down.
+        ForEach(spans) { span in
+            powerLane(span)
         }
         if let h = hovered {
             crosshair(at: h.date, to: 100)
         }
+    }
+
+    /// The lane hangs below 0% so it never collides with a 0% bar. Its thickness is
+    /// fixed in points rather than in domain units, so it stays a lane and doesn't
+    /// grow with the plot when the window is resized.
+    private static let laneFloor: Double = -20
+    private static let laneY: Double = -12
+    private static let laneThickness: CGFloat = 8
+
+    /// One stretch on the adapter, drawn in the lane beneath the level bars.
+    ///
+    /// The glyph is dropped on short spans: below a few percent of the visible span the
+    /// bolt is wider than the bar it labels, and a row of glyphs with no bars under them
+    /// reads as noise. The bar alone still carries "plugged in here".
+    @ChartContentBuilder
+    private func powerLane(_ span: ChargeSpan) -> some ChartContent {
+        if span.kind == .charging, span.duration > visibleSpan * 0.05 {
+            laneBar(span)
+                .annotation(position: .overlay, alignment: .center, spacing: 0) {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 7, weight: .black))
+                        // Dark ink, not white: system green is light enough in both
+                        // appearances that a white bolt on it fails contrast.
+                        .foregroundStyle(Color.black.opacity(0.7))
+                }
+        } else {
+            laneBar(span)
+        }
+    }
+
+    private func laneBar(_ span: ChargeSpan) -> some ChartContent {
+        let alpha: Double = span.kind == .charging ? 1 : 0.35
+        // No `BarMark(xStart:xEnd:yStart:yEnd:)` exists — the x-range init takes a
+        // centre line and a thickness instead.
+        return BarMark(
+            xStart: .value("from", span.start), xEnd: .value("to", span.end),
+            y: .value("lane", Self.laneY), height: .fixed(Self.laneThickness)
+        )
+        .foregroundStyle(Color.ptOk.opacity(alpha))
+        .cornerRadius(2)
     }
 
     private var powerHoverLabel: String {
@@ -459,9 +510,15 @@ struct DashboardView: View {
     }
 
     private var levelAxis: some AxisContent {
-        AxisMarks(position: .trailing, values: [0, 50, 100]) { _ in
+        AxisMarks(position: .trailing, values: [0, 50, 100]) { value in
             AxisGridLine().foregroundStyle(Color.ptBorder)
-            AxisValueLabel().font(.ptDetail).foregroundStyle(Color.ptFaint)
+            AxisValueLabel {
+                if let pct = value.as(Double.self) {
+                    Text("\(Int(pct))%")
+                }
+            }
+            .font(.ptDetail)
+            .foregroundStyle(Color.ptFaint)
         }
     }
 
@@ -509,23 +566,16 @@ struct DashboardView: View {
             .lineStyle(StrokeStyle(lineWidth: 1))
     }
 
-    /// A charging / held stretch, drawn full height so it reads as a period of TIME
-    /// rather than a value on the axis. Extracted for the same type-checker reason as `bar`.
+    /// A charging / held stretch, drawn full height behind the level so it reads as a
+    /// period of TIME rather than a value on the axis. It carries no glyph of its own:
+    /// the lane underneath names the stretch, and a label in both places was two marks
+    /// for one fact. Extracted for the same type-checker reason as `bar`.
     private func band(_ span: ChargeSpan) -> some ChartContent {
         RectangleMark(
             xStart: .value("from", span.start), xEnd: .value("to", span.end),
             yStart: .value("lo", 0), yEnd: .value("hi", 100)
         )
-        .foregroundStyle(span.tint.opacity(span.kind == .charging ? 0.20 : 0.12))
-        // .overlay keeps the glyph inside the plot area; .top would put it above the
-        // frame, where it gets clipped.
-        .annotation(position: .overlay, alignment: .topLeading, spacing: 0) {
-            Image(systemName: span.symbol)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(span.tint)
-                .padding(.leading, 2)
-                .padding(.top, 1)
-        }
+        .foregroundStyle(Color.ptOk.opacity(span.kind == .charging ? 0.16 : 0.09))
     }
 
     /// One block of a bar. Extracted because the inline form — three conditional
@@ -603,7 +653,7 @@ struct DashboardView: View {
             }
     }
 
-    private func panelTitle(_ title: String, detail: String) -> some View {
+    private func panelTitle(_ title: String, detail: String = "") -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(Color.ptText)
             Spacer()
