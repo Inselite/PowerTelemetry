@@ -13,6 +13,22 @@ struct PowerSample: Identifiable {
     var isCharging = false
     var onAC = false
     var adapterWatts = 0       // negotiated adapter ceiling (e.g. 140)
+
+    /// Largest magnitude among the tracked power flows. The adapter reads 0 W on
+    /// battery, so a menu bar pinned to `totalInW` would hide all activity while
+    /// unplugged; this always surfaces whatever is actually moving the most watts.
+    var peakW: Double { max(totalInW, loadW, abs(batteryW)) }
+
+    /// Which flow `peakW` came from — lets the UI label the number it shows.
+    var peakSource: PowerFlow {
+        if peakW == totalInW { return .adapter }
+        if peakW == loadW { return .load }
+        return batteryW < 0 ? .batteryDischarge : .batteryCharge
+    }
+}
+
+enum PowerFlow {
+    case adapter, load, batteryCharge, batteryDischarge
 }
 
 enum PowerSensor {
