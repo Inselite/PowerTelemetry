@@ -348,7 +348,7 @@ struct DashboardView: View {
         }
         if let ceiling = adapterCeiling, ceiling <= domain.upperBound {
             // Label only when idle: it lives in the same top strip as the scrub readout,
-            // and the two overlap on any bar near the right edge.
+            // and the readout clamps to the left edge once the cursor gets there.
             ceilingRule(ceiling, labelled: hovered == nil)
         }
         if let h = hovered {
@@ -453,10 +453,23 @@ struct DashboardView: View {
             RuleMark(y: .value("ceiling", ceiling))
                 .foregroundStyle(Color.ptText.opacity(0.45))
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                .annotation(position: .bottom, alignment: .trailing) {
+                // Leading, because the trailing edge is where the newest bars always
+                // are: a label parked there is guaranteed to sit on data, while the
+                // left end is empty whenever history is shorter than the range. It
+                // also clears the watt axis, which moved to the trailing side.
+                .annotation(position: .bottom, alignment: .leading, spacing: 2) {
                     Text("\(Int(ceiling)) W ceiling")
                         .font(.ptDetail)
-                        .foregroundStyle(Color.ptAdapter.opacity(0.7))
+                        // The line matters most exactly when the load approaches it —
+                        // which is when a full-height bar is behind the label. A chip
+                        // keeps it readable over solid orange or green instead of
+                        // depending on what happens to be underneath.
+                        .foregroundStyle(Color.ptDim)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Color.ptSurface.opacity(0.92),
+                                    in: RoundedRectangle(cornerRadius: 3))
+                        .padding(.leading, 2)
                 }
         } else {
             RuleMark(y: .value("ceiling", ceiling))
