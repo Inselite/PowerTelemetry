@@ -46,6 +46,18 @@ struct PowerBucket: Identifiable {
 }
 
 extension Array where Element == PowerSample {
+    /// Samples from `date` onward. The trace is sorted, so this is a binary search
+    /// rather than a scan of the whole retained history on every redraw — at 12 hours
+    /// that is 43 200 samples walked once a second to draw a one-minute window.
+    func suffix(from date: Date) -> [PowerSample] {
+        var lo = 0, hi = count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if self[mid].date < date { lo = mid + 1 } else { hi = mid }
+        }
+        return Array(self[lo...])
+    }
+
     /// Groups samples into fixed slices of `width` seconds.
     ///
     /// Slices are aligned to absolute time (multiples of `width` since the epoch) rather
