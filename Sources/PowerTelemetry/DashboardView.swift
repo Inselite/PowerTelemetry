@@ -423,11 +423,31 @@ struct DashboardView: View {
         return "\(Int(s.pct)) percent, \(state)"
     }
 
+    /// Seconds the x-axis currently covers. "All" is whatever has been recorded, so
+    /// this can't come from the range alone.
+    private var visibleSpan: TimeInterval {
+        if let cutoff = range.cutoff { return cutoff }
+        guard let first = store.samples.first?.date else { return 60 }
+        return max(60, Date().timeIntervalSince(first))
+    }
+
+    /// Below five minutes the automatic tick interval drops under a minute, and
+    /// hour+minute then prints the same label at every tick (`11:51, 11:51, 11:51`).
+    /// Seconds appear only there, and the tick count drops with them so five full
+    /// timestamps don't collide in the popover's narrower plot.
     private var timeAxis: some AxisContent {
-        AxisMarks(values: .automatic(desiredCount: 5)) { _ in
-            AxisValueLabel(format: .dateTime.hour().minute())
-                .font(.ptDetail)
-                .foregroundStyle(Color.ptFaint)
+        let fine = visibleSpan < 300
+        let now = Date()
+        return AxisMarks(values: .automatic(desiredCount: fine ? 4 : 5)) { value in
+            // A tick landing on "now" sits on the plot's right edge, where the label is
+            // centred on the boundary and the trailing half is clipped away — it renders
+            // as a stray "1". Nothing is lost by dropping it: that edge is always now.
+            if let d = value.as(Date.self), now.timeIntervalSince(d) > visibleSpan * 0.04 {
+                AxisValueLabel(format: fine ? .dateTime.hour().minute().second()
+                                            : .dateTime.hour().minute())
+                    .font(.ptDetail)
+                    .foregroundStyle(Color.ptFaint)
+            }
         }
     }
 
