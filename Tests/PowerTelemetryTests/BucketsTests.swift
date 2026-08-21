@@ -118,3 +118,24 @@ final class SensorWattsTests: XCTestCase {
         XCTAssertEqual(PowerSensor.watts(NSNumber(value: -1)), 0)
     }
 }
+
+final class SettledLoadTests: XCTestCase {
+    func testPositiveReadingIsTakenAsIs() {
+        XCTAssertEqual(PowerSensor.settledLoad(rawLoadW: 25.7, lastGood: 38), 25.7, accuracy: 0.0001)
+    }
+
+    func testNegativeReadingHoldsTheLastGoodLoad() {
+        // The unplug transient: SystemLoad derives negative from a stale BatteryPower.
+        // The load must not read 0, nor the impossible negative — it holds the last good.
+        XCTAssertEqual(PowerSensor.settledLoad(rawLoadW: -91.5, lastGood: 38), 38, accuracy: 0.0001)
+    }
+
+    func testNegativeWithNoHistoryFallsToZero() {
+        // App launched straight onto a stale battery reading, nothing to hold.
+        XCTAssertEqual(PowerSensor.settledLoad(rawLoadW: -91.5, lastGood: nil), 0)
+    }
+
+    func testZeroIsRealAndKept() {
+        XCTAssertEqual(PowerSensor.settledLoad(rawLoadW: 0, lastGood: 38), 0)
+    }
+}

@@ -33,7 +33,12 @@ enum PowerFlow {
 
 enum PowerSensor {
     /// Returns nil on Macs without battery telemetry (desktops, Intel).
-    static func read() -> PowerSample? {
+    ///
+    /// `previous` is the last sample the store kept. On battery the telemetry block
+    /// lags the plug by ~14 s and momentarily reports a negative load; the previous
+    /// sample's load stands in for that window. Passing it in rather than holding it
+    /// keeps this a pure read of the hardware.
+    static func read(previous: PowerSample? = nil) -> PowerSample? {
         var s = PowerSample(date: Date())
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
         guard service != IO_OBJECT_NULL else { return nil }
@@ -47,26 +52,31 @@ enum PowerSensor {
         s.isCharging = (d["IsCharging"] as? Bool) ?? false
         s.onAC = (d["ExternalConnected"] as? Bool) ?? false
 
+        var rawLoadW = 0.0
         if let t = d["PowerTelemetryData"] as? [String: Any] {
-            // Load and adapter output are magnitudes of a flow, not signed quantities:
-            // the Mac cannot consume negative watts and an adapter cannot deliver them.
-            // `watts` clamps them, because the firmware has been seen reporting a
-            // negative SystemLoad — it reached the panel as an impossible "−50 W"
-            // system load. Battery power is the one that really is signed.
-            s.loadW = watts(t["SystemLoad"])
+            // Load and adapter output are flow magnitudes, not signed quantities — the
+            // Mac cannot consume negative watts and an adapter cannot deliver them — so
+            // both floor at zero. Battery power is the one genuinely signed flow
+            // (+ charging, − discharging). `rawLoadW` keeps the unfloored SystemLoad,
+            // because its sign is the tell for the stale window handled below.
+            rawLoadW = num(t["SystemLoad"]) / 1000
+            s.loadW = max(0, rawLoadW)
             s.batteryW = signed(t["BatteryPower"]) / 1000
             s.totalInW = watts(t["SystemPowerIn"])
         }
         s.amps = signed(d["InstantAmperage"]) / 1000
 
-        // `ExternalConnected` flips the instant the plug leaves, but PowerTelemetryData
-        // only refreshes every ~14 s, so for a few seconds after unplugging SystemPowerIn
-        // still holds its last on-adapter value and BatteryPower still reads 0. Taken at
-        // face value the panels credit an absent adapter for the whole load — an
-        // "8 W" adapter output sitting above "no adapter connected". Off AC there is
-        // exactly one source, so say so rather than repeating a stale reading.
+        // On battery there is exactly one source, so the adapter reads nothing and
+        // battery power mirrors the load. But the telemetry block lags the plug by
+        // ~14 s: at the instant of unplug SystemPowerIn drops to 0 while BatteryPower
+        // still holds its on-AC *charging* value, and the firmware derives SystemLoad
+        // as SystemPowerIn − BatteryPower — so load goes momentarily negative (observed
+        // live: in=0, batt=+91.5, load=−91.5). A negative load is impossible; it is the
+        // tell that the block hasn't refreshed, so the last good load stands in until it
+        // does, rather than reporting 0 W for those seconds.
         if !s.onAC {
             s.totalInW = 0
+            s.loadW = Self.settledLoad(rawLoadW: rawLoadW, lastGood: previous?.loadW)
             s.batteryW = -s.loadW
         }
 
@@ -78,6 +88,14 @@ enum PowerSensor {
 
     private static func num(_ v: Any?) -> Double {
         (v as? NSNumber)?.doubleValue ?? 0
+    }
+
+    /// The load to report on battery. A negative raw reading means the telemetry block
+    /// has not refreshed since unplug — SystemLoad is derived from a stale, still-positive
+    /// BatteryPower — so the last good load stands in until it does; any non-negative
+    /// reading is taken as is. The result is always a real, non-negative draw.
+    static func settledLoad(rawLoadW: Double, lastGood: Double?) -> Double {
+        rawLoadW >= 0 ? rawLoadW : (lastGood ?? 0)
     }
 
     /// A one-directional flow, converted from milliwatts and floored at zero.

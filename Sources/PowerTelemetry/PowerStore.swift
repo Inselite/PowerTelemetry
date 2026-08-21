@@ -20,7 +20,7 @@ final class PowerStore: ObservableObject {
     }
 
     private func tick() {
-        guard let sample = PowerSensor.read() else {
+        guard let sample = PowerSensor.read(previous: samples.last) else {
             // Only a Mac that has never reported is unsupported. A read can fail
             // transiently around sleep/wake, and latching this would swap the whole
             // dashboard for the unavailable screen until the next launch.
