@@ -173,3 +173,19 @@ final class ForwardFillTests: XCTestCase {
         XCTAssertEqual(bars.count, 2)
     }
 }
+
+extension ForwardFillTests {
+    func testAShortSamplerStallIsBridgedAtEveryWidth() {
+        // The 1 Hz sampler shares the main thread with chart redraws and has been seen
+        // starving for ~2-3 s. The sensor holds readings ~14 s, so bridging that stall
+        // fabricates nothing — and the cap is absolute time, so the same stall must
+        // bridge at the sub-second widths too, not only at the wide ones.
+        let stalled = [sample(0, load: 5), sample(1, load: 5), sample(2, load: 6),
+                       sample(5.4, load: 7), sample(6, load: 7)]
+        let bars = stalled.bucketed(width: 0.6)
+        XCTAssertEqual(bars.count, 11) // slots 0.0 ... 6.0, none missing
+        for (a, b) in zip(bars, bars.dropFirst()) {
+            XCTAssertEqual(b.start.timeIntervalSince(a.end), 0, accuracy: 0.001)
+        }
+    }
+}
