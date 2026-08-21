@@ -39,7 +39,7 @@ struct DashboardView: View {
     /// while such a range is on screen — `paused` stops everything off screen. Going
     /// smoother than this means taking the bars out of Swift Charts, not ticking faster.
     private var timeline: PausableTimeline {
-        PausableTimeline(interval: (range.cutoff ?? .infinity) <= 60 ? 0.2 : 1,
+        PausableTimeline(interval: (range.cutoff ?? allWindowSeconds) <= 60 ? 0.2 : 1,
                          paused: !onScreen)
     }
 
@@ -74,6 +74,16 @@ struct DashboardView: View {
         }
     }
 
+    /// The seconds "All" spans: the smallest 50-column window that covers the whole
+    /// session, with the column width on a doubling ladder (1 s, 2 s, 4 s…). A window
+    /// derived directly from the session span would either fatten the bars as the
+    /// session grows or re-grid every second to hold the count; the ladder holds the
+    /// same 8 px pitch as every other range and re-grids once per doubling instead.
+    private var allWindowSeconds: TimeInterval {
+        let span = max(50, Date().timeIntervalSince(store.samples.first?.date ?? Date()))
+        return 50 * pow(2, (log2(span / 50)).rounded(.up))
+    }
+
     private var latest: PowerSample? { store.latest }
     /// What the metric cells describe: the scrubbed point while the pointer is over a
     /// chart, otherwise the live sample. The chart's own scales stay tied to `latest`
@@ -95,14 +105,10 @@ struct DashboardView: View {
         return store.samples.suffix(from: since)
     }
 
-    /// The bars. "All" scales its width with the session so it holds the same column
-    /// count as every other range, floored at a second — below the sample interval a
-    /// column can come up empty.
+    /// The bars. "All" takes its width from the ladder window so its columns match
+    /// every other range exactly.
     private func bucket(_ samples: [PowerSample]) -> [PowerBucket] {
-        var width = range.bucket
-        if range == .all, let first = samples.first?.date, let last = samples.last?.date {
-            width = max(1, (last.timeIntervalSince(first) / range.columns).rounded())
-        }
+        let width = range == .all ? allWindowSeconds / range.columns : range.bucket
         return samples.bucketed(width: width)
     }
 
@@ -128,8 +134,10 @@ struct DashboardView: View {
         if let cutoff = range.cutoff {
             return end.addingTimeInterval(-cutoff)...end
         }
-        let start = store.samples.first?.date ?? end.addingTimeInterval(-60)
-        return min(start, end.addingTimeInterval(-1))...end
+        // "All": the ladder window, which by construction contains the whole session.
+        // Early in a session it is mostly empty on the left and the bars grow leftward
+        // into it — the pitch never changes, which is the point.
+        return end.addingTimeInterval(-allWindowSeconds)...end
     }
 
     var body: some View {
@@ -549,12 +557,10 @@ struct DashboardView: View {
         return "\(Int(s.pct)) percent, \(state)"
     }
 
-    /// Seconds the x-axis currently covers. "All" is whatever has been recorded, so
-    /// this can't come from the range alone.
+    /// Seconds the x-axis currently covers. "All" is its ladder window, so this
+    /// can't come from the range alone.
     private var visibleSpan: TimeInterval {
-        if let cutoff = range.cutoff { return cutoff }
-        guard let first = store.samples.first?.date else { return 60 }
-        return max(60, Date().timeIntervalSince(first))
+        range.cutoff ?? allWindowSeconds
     }
 
     /// Ticks anchor to fixed absolute times (strides), not to `.automatic`: automatic
