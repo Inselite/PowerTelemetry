@@ -83,15 +83,19 @@ extension Array where Element == PowerSample {
         let i0 = Int((firstKey.timeIntervalSince1970 / width).rounded())
         let i1 = Int((lastKey.timeIntervalSince1970 / width).rounded())
         // An empty slot between occupied ones borrows the previous sample, as long as
-        // that sample is at most a couple of slots stale. Two reasons this is sound:
+        // that sample is only a few seconds stale. Two reasons this is sound:
         // slots narrower than the 1 Hz sampling interval ("30 s" uses 0.6 s slots so
         // every range shares one bar width) would otherwise alternate bar/gap; and a
         // dropped sample at any range would leave a missing-bar hole. The cap keeps it
         // honest at scale: a sleep gap spans minutes and is never bridged — absence of
         // data stays visible as absent bars.
-        // Half a slot of tolerance: grid times are products of `width` and carry
-        // floating-point error, so a slot exactly at the cap can miss it by an ulp.
-        let maxFill = Swift.min(width * 2, 3.0) + width / 2
+        // The cap is absolute time, not slots: a ~2-3 s sampler stall (the 1 Hz timer
+        // shares the main thread with 5 Hz chart redraws and has been seen starving,
+        // leaving a 4-bar hole) must bridge identically at every range, and the ~14 s
+        // sensor hold makes a few seconds of missing 1 Hz samples meaningless anyway.
+        // Sleep gaps span minutes and are never bridged. Half a slot of tolerance
+        // absorbs float error in the grid times.
+        let maxFill = 3.0 + width / 2
         var carry: (sample: PowerSample, level: PowerSample)?
         var out: [PowerBucket] = []
         for i in i0...i1 {
