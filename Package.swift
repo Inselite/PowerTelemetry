@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "PowerTelemetry",
             path: "Sources/PowerTelemetry"
+        ),
+        .testTarget(
+            name: "PowerTelemetryTests",
+            dependencies: ["PowerTelemetry"],
+            path: "Tests/PowerTelemetryTests"
         )
     ]
 )
