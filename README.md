@@ -6,11 +6,13 @@ It reads power data directly from IOKit and displays adapter output, system load
 
 ## Features
 
-- Live wattage in the macOS menu bar
+- Live wattage in the macOS menu bar, always showing the highest active power flow — adapter output, system load, or battery power — so the reading stays meaningful on battery
 - Adapter output, system load, and signed battery power at 1 Hz
-- Battery charging above zero and discharging below zero
+- Power drawn as bars per time slice: the solid bar is system load, coloured by whether the adapter or the battery is supplying it, and the faded cap above it is surplus charging the battery
+- Battery level as bars with charging / holding periods marked as bands
 - Dynamic chart scale with a negotiated adapter-ceiling reference
 - Time ranges for the last 1 minute, 1 hour, 4 hours, or the current session
+- Hover any chart to scrub history: a crosshair pins that moment, a readout follows it, and the metric cells report its values
 - Smooth, continuously moving time axis
 - Resizable detailed window in addition to the menu bar popover
 - Native macOS controls and semantic system colors for Light and Dark appearances
