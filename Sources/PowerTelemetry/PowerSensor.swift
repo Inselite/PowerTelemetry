@@ -54,6 +54,17 @@ enum PowerSensor {
         }
         s.amps = signed(d["InstantAmperage"]) / 1000
 
+        // `ExternalConnected` flips the instant the plug leaves, but PowerTelemetryData
+        // only refreshes every ~14 s, so for a few seconds after unplugging SystemPowerIn
+        // still holds its last on-adapter value and BatteryPower still reads 0. Taken at
+        // face value the panels credit an absent adapter for the whole load — an
+        // "8 W" adapter output sitting above "no adapter connected". Off AC there is
+        // exactly one source, so say so rather than repeating a stale reading.
+        if !s.onAC {
+            s.totalInW = 0
+            s.batteryW = -s.loadW
+        }
+
         if let ad = d["AdapterDetails"] as? [String: Any] {
             s.adapterWatts = Int(num(ad["Watts"]))
         }
