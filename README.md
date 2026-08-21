@@ -11,7 +11,7 @@ services, or network access.
 - Menu bar wattage showing the highest active power flow, with the bolt tinted by source — meaningful on battery, not just on AC
 - Power flow as bars, one bar carrying all three figures (see below)
 - Battery level in the style of macOS Battery settings, with an adapter lane and a red warning zone
-- Time ranges: 1 minute, 1 hour, 4 hours, or the whole session
+- Time ranges: 30 seconds, 1 minute, 1 hour, 4 hours, or the whole session
 - Hover to scrub history; a crosshair and readout pin any moment
 - Negotiated adapter ceiling drawn as a reference line
 - Resizable detail window, Light/Dark appearance, VoiceOver labels

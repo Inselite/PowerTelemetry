@@ -78,12 +78,35 @@ extension Array where Element == PowerSample {
             groups[Date(timeIntervalSince1970: slot), default: []].append(s)
         }
         let newest = last?.date ?? .distantPast
-        return groups.keys.sorted().compactMap { start in
-            guard let group = groups[start], let busiest = group.max(by: { $0.loadW < $1.loadW }),
-                  let level = group.last else { return nil }
+        let keys = groups.keys.sorted()
+        guard let firstKey = keys.first, let lastKey = keys.last else { return [] }
+        let i0 = Int((firstKey.timeIntervalSince1970 / width).rounded())
+        let i1 = Int((lastKey.timeIntervalSince1970 / width).rounded())
+        // An empty slot between occupied ones borrows the previous sample, as long as
+        // that sample is at most a couple of slots stale. Two reasons this is sound:
+        // slots narrower than the 1 Hz sampling interval ("30 s" uses 0.6 s slots so
+        // every range shares one bar width) would otherwise alternate bar/gap; and a
+        // dropped sample at any range would leave a missing-bar hole. The cap keeps it
+        // honest at scale: a sleep gap spans minutes and is never bridged — absence of
+        // data stays visible as absent bars.
+        // Half a slot of tolerance: grid times are products of `width` and carry
+        // floating-point error, so a slot exactly at the cap can miss it by an ulp.
+        let maxFill = Swift.min(width * 2, 3.0) + width / 2
+        var carry: (sample: PowerSample, level: PowerSample)?
+        var out: [PowerBucket] = []
+        for i in i0...i1 {
+            let start = Date(timeIntervalSince1970: Double(i) * width)
             let end = start.addingTimeInterval(width)
-            return PowerBucket(id: start, start: start, end: end, sample: busiest,
-                               levelPct: level.pct, isPartial: end > newest)
+            if let group = groups[start], let busiest = group.max(by: { $0.loadW < $1.loadW }),
+               let level = group.last {
+                carry = (busiest, level)
+                out.append(PowerBucket(id: start, start: start, end: end, sample: busiest,
+                                       levelPct: level.pct, isPartial: end > newest))
+            } else if let c = carry, start.timeIntervalSince(c.level.date) <= maxFill {
+                out.append(PowerBucket(id: start, start: start, end: end, sample: c.sample,
+                                       levelPct: c.level.pct, isPartial: end > newest))
+            }
         }
+        return out
     }
 }

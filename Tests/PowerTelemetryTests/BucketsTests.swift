@@ -139,3 +139,37 @@ final class SettledLoadTests: XCTestCase {
         XCTAssertEqual(PowerSensor.settledLoad(rawLoadW: 0, lastGood: 38), 0)
     }
 }
+
+final class ForwardFillTests: XCTestCase {
+    private let t0 = Date(timeIntervalSince1970: 1_000_020) // multiple of 60 and of 0.6
+
+    private func sample(_ offset: Double, load: Double) -> PowerSample {
+        var s = PowerSample(date: t0.addingTimeInterval(offset))
+        s.loadW = load
+        return s
+    }
+
+    func testSubSampleSlotsBorrowThePreviousSample() {
+        // 1 Hz samples over 0.6 s slots: slots with no sample of their own borrow the
+        // previous one, so a 50-column short range has no picket-fence gaps.
+        let bars = [sample(0, load: 5), sample(2, load: 7)].bucketed(width: 0.6)
+        XCTAssertEqual(bars.count, 4)
+        for (a, b) in zip(bars, bars.dropFirst()) {
+            XCTAssertEqual(b.start.timeIntervalSince(a.end), 0, accuracy: 0.001)
+        }
+        XCTAssertEqual(bars[1].sample.loadW, 5) // borrowed backward, never forward
+    }
+
+    func testASingleDroppedSampleLeavesNoHole() {
+        let bars = [sample(0, load: 5), sample(2, load: 7)].bucketed(width: 1)
+        XCTAssertEqual(bars.count, 3)
+        XCTAssertEqual(bars[1].sample.loadW, 5)
+    }
+
+    func testLongGapsAreNeverBridged() {
+        // An idle ten minutes must stay visible as absent bars, not render as a flat
+        // run of stale readings.
+        let bars = [sample(0, load: 5), sample(600, load: 7)].bucketed(width: 60)
+        XCTAssertEqual(bars.count, 2)
+    }
+}
