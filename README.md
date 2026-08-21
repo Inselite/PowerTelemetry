@@ -9,7 +9,7 @@ It reads power data directly from IOKit and displays adapter output, system load
 - Live wattage in the macOS menu bar, always showing the highest active power flow — adapter output, system load, or battery power — so the reading stays meaningful on battery
 - Adapter output, system load, and signed battery power at 1 Hz
 - Power drawn as bars per time slice, encoding all three flows in one shape (see [Reading the power chart](#reading-the-power-chart))
-- Battery level as bars, with charging and holding periods marked as bands
+- Battery level as bars in the macOS Battery-settings idiom: a lane beneath the chart marks when the adapter was connected, and the level turns red in the warning zone
 - Dynamic chart scale with a negotiated adapter-ceiling reference
 - Time ranges for the last 1 minute, 1 hour, 4 hours, or the current session
 - Hover any chart to scrub history: a crosshair pins that moment, a readout follows it, and the metric cells report its values
@@ -72,6 +72,25 @@ Each bar takes the busiest sample in its slice rather than an average, so bursts
 Slices align to absolute time, so a bar's edges never move once drawn — new bars appear
 at the right instead of every bar shifting. The newest bar is dimmed while it is still
 filling.
+
+A dashed line marks the negotiated adapter ceiling once the load comes within half of it.
+Its label sits at the left edge, on a chip: the right edge always carries the newest bars,
+so a label parked there would sit on data exactly when the ceiling matters most.
+
+## Reading the battery chart
+
+The battery panel follows macOS's own Battery settings chart.
+
+| Mark | Meaning |
+|---|---|
+| Green bar | Battery level for that slice |
+| Red bar | Level in the warning zone, below 20% |
+| Shaded band | The adapter was connected |
+| Lane bar beneath the chart | The adapter was connected; a bolt marks where it was actually charging |
+
+Discharge has no mark of its own — it is the stretch where the lane underneath is empty
+and the level walks down. A run of level bars with nothing below them is the Mac running
+on its battery.
 
 ## Metrics
 

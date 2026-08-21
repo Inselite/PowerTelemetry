@@ -15,6 +15,7 @@ extension Color {
     static let ptCharge  = Color(nsColor: .systemBlue)   // battery charge
     static let ptLoad    = Color(nsColor: .secondaryLabelColor) // system load (neutral)
     static let ptOk      = Color(nsColor: .systemGreen)  // battery level
+    static let ptLow     = Color(nsColor: .systemRed)    // battery level in the warning zone
 }
 
 extension Font {

@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 
 /// A contiguous stretch on the adapter, split by what the battery was actually
 /// doing: taking charge, or holding while the adapter carried the load.
@@ -10,8 +9,6 @@ struct ChargeSpan: Identifiable, Equatable {
     var end: Date
     let kind: Kind
 
-    var symbol: String { kind == .charging ? "bolt.fill" : "pause.fill" }
-    var tint: Color { kind == .charging ? .ptOk : .ptFaint }
     var duration: TimeInterval { end.timeIntervalSince(start) }
 
     static func == (a: ChargeSpan, b: ChargeSpan) -> Bool {
@@ -26,7 +23,7 @@ extension Array where Element == PowerSample {
     /// a run breaks when the gap between samples exceeds `maxGap`, because sleep/wake
     /// leaves an hours-long hole that would otherwise render as one continuous band;
     /// and spans under `minSpan` are dropped, because `IsCharging` flickers for a second
-    /// or two either side of plugging in and each flicker would draw its own glyph.
+    /// or two either side of plugging in and each flicker would draw its own bar in the lane.
     func chargeSpans(maxGap: TimeInterval = 30, minSpan: TimeInterval = 5) -> [ChargeSpan] {
         var spans: [ChargeSpan] = []
         for s in self {
