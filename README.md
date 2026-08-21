@@ -8,8 +8,8 @@ It reads power data directly from IOKit and displays adapter output, system load
 
 - Live wattage in the macOS menu bar, always showing the highest active power flow — adapter output, system load, or battery power — so the reading stays meaningful on battery
 - Adapter output, system load, and signed battery power at 1 Hz
-- Power drawn as bars per time slice: the solid bar is system load, coloured by whether the adapter or the battery is supplying it, and the faded cap above it is surplus charging the battery
-- Battery level as bars with charging / holding periods marked as bands
+- Power drawn as bars per time slice, encoding all three flows in one shape (see [Reading the power chart](#reading-the-power-chart))
+- Battery level as bars, with charging and holding periods marked as bands
 - Dynamic chart scale with a negotiated adapter-ceiling reference
 - Time ranges for the last 1 minute, 1 hour, 4 hours, or the current session
 - Hover any chart to scrub history: a crosshair pins that moment, a readout follows it, and the metric cells report its values
@@ -46,6 +46,33 @@ The current implementation reads the `AppleSmartBattery` IOKit service and its `
 
 Compatibility reports are welcome. Include the Mac model, macOS version, and which metrics are missing or incorrect.
 
+## Reading the power chart
+
+Each bar is one slice of time. The three figures are not independent — the adapter's
+output splits into what the Mac is using and what is going into the battery:
+
+```
+adapter output = system load + battery charge
+```
+
+so a single bar carries all three without stacking unrelated quantities:
+
+| Segment | Meaning |
+|---|---|
+| Orange | The part of the system load the adapter is supplying |
+| Blue | The part the battery is supplying — the load has outrun the adapter, or nothing is plugged in |
+| Green (cap on top) | Adapter output above the load: surplus charging the battery |
+
+**The solid bar is always the system load**, whatever the state; only its colour changes
+to show who is paying for it. The green cap only appears while charging, so the full
+silhouette is adapter output when charging and system load otherwise. Direction is
+carried by colour rather than by sign, so the axis never needs to go below zero.
+
+Each bar takes the busiest sample in its slice rather than an average, so bursts survive.
+Slices align to absolute time, so a bar's edges never move once drawn — new bars appear
+at the right instead of every bar shifting. The newest bar is dimmed while it is still
+filling.
+
 ## Metrics
 
 | Metric | Meaning |
@@ -57,6 +84,11 @@ Compatibility reports are welcome. Include the Mac model, macOS version, and whi
 | Battery level | Current state of charge, including optimized-charging hold states when detectable |
 
 The values come from Apple's internal power telemetry and may differ slightly from measurements taken at the wall because of adapter conversion losses and sampling time.
+
+Power Telemetry samples at 1 Hz, but on the hardware tested `AppleSmartBattery` only
+refreshes its telemetry roughly every 14 seconds, holding each value in between. Charts
+are therefore honest staircases rather than smooth curves, and a change you cause can
+take up to ~14 seconds to appear.
 
 ## Privacy
 
