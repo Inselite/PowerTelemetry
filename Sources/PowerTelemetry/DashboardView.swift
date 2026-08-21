@@ -30,17 +30,24 @@ struct DashboardView: View {
     /// False while this copy of the dashboard is off screen — see `PausableTimeline`.
     @State private var onScreen = false
 
-    /// Once per second, matching the sampler. The window edge snaps to bucket
-    /// boundaries (see `xDomain`), so between snaps a redraw changes nothing but the
-    /// filling bar — there is no continuous motion for a faster rate to smooth.
+    /// 5 Hz on the short ranges, where the window slides 12-25 px/s and the redraw
+    /// rate is the frame rate of that motion; 1 Hz elsewhere, where the slide is
+    /// sub-pixel per tick and the sampler's own rate is enough. Flowing motion on the
+    /// short ranges is the priority by explicit request. Every rate was measured with
+    /// the popover open at "1 m" before choosing: Swift Charts renders the whole chart
+    /// per frame, so 10 Hz costs 33-42% CPU, 5 Hz 21-27%, and the cost is paid only
+    /// while such a range is on screen — `paused` stops everything off screen. Going
+    /// smoother than this means taking the bars out of Swift Charts, not ticking faster.
     private var timeline: PausableTimeline {
-        PausableTimeline(interval: 1, paused: !onScreen)
+        PausableTimeline(interval: (range.cutoff ?? .infinity) <= 60 ? 0.2 : 1,
+                         paused: !onScreen)
     }
 
     private enum TimeRange: String, CaseIterable {
-        case minute = "1 m", hour = "1 h", fourHours = "4 h", all = "All"
+        case halfMinute = "30 s", minute = "1 m", hour = "1 h", fourHours = "4 h", all = "All"
         var cutoff: TimeInterval? {
             switch self {
+            case .halfMinute: return 30
             case .minute: return 60
             case .hour: return 3600
             case .fourHours: return 14400
@@ -52,16 +59,18 @@ struct DashboardView: View {
         /// what a bar covers, not how the chart looks. Hard-coded widths used to give
         /// 30 columns at "1 m" and 60 at "1 h", so bars visibly changed size.
         ///
-        /// 50 is also the practical ceiling at the shortest range: it puts "1 m" at
-        /// 1.2 s per column, and a column narrower than the 1 Hz sample interval would
-        /// leave empty slices with no bar to draw.
-        static let columns = 50.0
+        /// The same count for every range, so a bar is the same width whichever range
+        /// is selected — no exceptions. "30 s" gives 0.6 s columns from a 1 Hz sampler;
+        /// columns without a sample of their own borrow the previous one — see
+        /// `bucketed(width:)`. The sensor only refreshes every ~14 s, so a 1 Hz series
+        /// is already repeats of each real reading and the borrow fabricates nothing.
+        var columns: Double { 50 }
 
         /// Seconds per column. "All" has no fixed span, so it derives its own width
         /// from the session — see `bucket(_:)`.
         var bucket: TimeInterval {
             guard let cutoff else { return 0 }
-            return cutoff / Self.columns
+            return cutoff / columns
         }
     }
 
@@ -79,7 +88,10 @@ struct DashboardView: View {
     /// Samples inside the range, at full resolution — bucketing does the reducing.
     private var rangeSamples: [PowerSample] {
         guard let cutoff = range.cutoff else { return store.samples }
-        let since = Date().addingTimeInterval(-cutoff)
+        // One extra bucket beyond the left edge: the oldest bar then leaves by sliding
+        // through the plot's clip edge during the step, instead of vanishing the
+        // instant its samples age out of the cutoff — "the last one jumps off".
+        let since = Date().addingTimeInterval(-cutoff - range.bucket)
         return store.samples.suffix(from: since)
     }
 
@@ -89,7 +101,7 @@ struct DashboardView: View {
     private func bucket(_ samples: [PowerSample]) -> [PowerBucket] {
         var width = range.bucket
         if range == .all, let first = samples.first?.date, let last = samples.last?.date {
-            width = max(1, (last.timeIntervalSince(first) / TimeRange.columns).rounded())
+            width = max(1, (last.timeIntervalSince(first) / range.columns).rounded())
         }
         return samples.bucketed(width: width)
     }
@@ -106,19 +118,15 @@ struct DashboardView: View {
         return 0...top
     }
 
-    /// The visible time window. Its edge snaps up to the next bucket boundary rather
-    /// than riding "now": with the edge on the raw clock the whole field of bars slides
-    /// left continuously — ~12 px/s at "1 m", a visible lurch per redraw. Snapped, a
-    /// bar keeps its pixels for its whole life and new bars appear in the rightmost
-    /// slot as they fill, the way the system's own battery chart behaves. The width is
-    /// an exact divisor of the cutoff, so the left edge lands on a boundary too and
-    /// bars part-visible at the edge cannot occur.
+    /// The visible window, its edge riding "now": the field slides continuously, and
+    /// the redraw rate (`timeline`) is chosen so the slide reads as motion rather than
+    /// as jumps. A snapped, stepping window was tried and rejected — with uniform bars
+    /// a one-slot step reads as the edge bars popping — as were animated steps, which
+    /// Swift Charts renders at full-chart cost per frame (27-49% CPU measured). The
+    /// edge-fade ramp (`edgeFade`) keeps the ends gentle instead.
     private func xDomain(endingAt end: Date) -> ClosedRange<Date> {
         if let cutoff = range.cutoff {
-            let width = range.bucket
-            let snapped = Date(timeIntervalSince1970:
-                (end.timeIntervalSince1970 / width).rounded(.up) * width)
-            return snapped.addingTimeInterval(-cutoff)...snapped
+            return end.addingTimeInterval(-cutoff)...end
         }
         let start = store.samples.first?.date ?? end.addingTimeInterval(-60)
         return min(start, end.addingTimeInterval(-1))...end
@@ -336,7 +344,7 @@ struct DashboardView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 190)
+                .frame(width: 232)
                 Button {
                     NSApp.activate()
                     openWindow(id: "main")
@@ -351,9 +359,10 @@ struct DashboardView: View {
                 .accessibilityLabel("Enlarge power flow chart")
             }
             TimelineView(timeline) { context in
-                Chart { powerMarks(bars, domain: domain) }
+                let xd = xDomain(endingAt: context.date)
+                Chart { powerMarks(bars, domain: domain, window: xd) }
                     .chartYScale(domain: domain)
-                    .chartXScale(domain: xDomain(endingAt: context.date))
+                    .chartXScale(domain: xd)
                     .chartOverlay { proxy in
                         GeometryReader { geo in
                             scrubber(proxy, geo, in: bars)
@@ -377,16 +386,39 @@ struct DashboardView: View {
     }
 
     /// Split out of the `Chart` builder: as one expression the type-checker gives up.
+    /// Continuous opacity ramp at the window edges: a bar spends its whole last
+    /// slot-width fading out as it slides toward the left edge, and the newest bar
+    /// fades in over its first. Recomputed from position on every redraw rather than
+    /// animated, so the ramp advances with the sliding window itself — nothing ever
+    /// pops in or out at full brightness, and nothing disappears before the edge.
+    private func edgeFade(_ b: PowerBucket, in window: ClosedRange<Date>) -> Double {
+        let w = b.end.timeIntervalSince(b.start)
+        guard w > 0 else { return 1 }
+        // The ramp is aligned to the bar's DRAWN edges, not its slot: the drawn bar is
+        // inset by `PowerBucket.inset` on each side, so the fade must reach zero while
+        // the slot still overlaps the window — exactly when the bar's last drawn pixel
+        // touches the edge. Aligned to the slot instead, a clipped ~20%-alpha remnant
+        // would slide off, which is the "disappears too soon" pop.
+        let inset = PowerBucket.inset
+        let t = b.end.timeIntervalSince(window.lowerBound) / w
+        let u = window.upperBound.timeIntervalSince(b.start) / w
+        let fadeOut = min(1, max(0, (t - inset) / (1 - inset)))
+        let fadeIn = min(1, max(0, (u - inset) / (1 - inset)))
+        return fadeOut * fadeIn
+    }
+
     @ChartContentBuilder
-    private func powerMarks(_ bars: [PowerBucket], domain: ClosedRange<Double>) -> some ChartContent {
+    private func powerMarks(_ bars: [PowerBucket], domain: ClosedRange<Double>,
+                            window: ClosedRange<Date>) -> some ChartContent {
         ForEach(bars) { b in
+            let fade = edgeFade(b, in: window)
             // Solid = system load, split by who is supplying it.
-            bar(b, 0, b.fromAdapter, Color.ptAdapter)
-            bar(b, b.fromAdapter, b.fromAdapter + b.fromBattery, Color.ptCharge)
+            bar(b, 0, b.fromAdapter, Color.ptAdapter, fade: fade)
+            bar(b, b.fromAdapter, b.fromAdapter + b.fromBattery, Color.ptCharge, fade: fade)
             // Charge gets its own solid colour rather than a wash of the adapter hue:
             // as a tint it was the largest area on the chart and the hardest to see.
             // Green matches the ⚡ band and the level bars below — green means battery.
-            bar(b, b.top - b.intoBattery, b.top, Color.ptOk)
+            bar(b, b.top - b.intoBattery, b.top, Color.ptOk, fade: fade)
         }
         if let ceiling = adapterCeiling, ceiling <= domain.upperBound {
             // Label only when idle: it lives in the same top strip as the scrub readout,
@@ -402,12 +434,13 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 8) {
             panelTitle("Battery level")
             TimelineView(timeline) { context in
-                Chart { batteryMarks(spans, bars) }
+                let xd = xDomain(endingAt: context.date)
+                Chart { batteryMarks(spans, bars, window: xd) }
                     // The domain reaches below zero to make room for the power lane.
                     // Drawing the lane inside the chart rather than as a view beneath it
                     // is what keeps it aligned with the bars for free, at every range.
                     .chartYScale(domain: Self.laneFloor...100)
-                    .chartXScale(domain: xDomain(endingAt: context.date))
+                    .chartXScale(domain: xd)
                     .chartOverlay { proxy in
                         GeometryReader { geo in
                             scrubber(proxy, geo, in: bars)
@@ -430,7 +463,8 @@ struct DashboardView: View {
     }
 
     @ChartContentBuilder
-    private func batteryMarks(_ spans: [ChargeSpan], _ bars: [PowerBucket]) -> some ChartContent {
+    private func batteryMarks(_ spans: [ChargeSpan], _ bars: [PowerBucket],
+                              window: ClosedRange<Date>) -> some ChartContent {
         // Bands first, so the level bars draw over them.
         ForEach(spans) { span in
             band(span)
@@ -438,7 +472,8 @@ struct DashboardView: View {
         ForEach(bars) { b in
             // Red in the warning zone, the way the system marks a low battery. It is
             // the one level worth spotting without reading the axis.
-            bar(b, 0, b.levelPct, b.levelPct < 20 ? Color.ptLow : Color.ptOk)
+            bar(b, 0, b.levelPct, b.levelPct < 20 ? Color.ptLow : Color.ptOk,
+                fade: edgeFade(b, in: window))
         }
         // The power lane, under the level: a bar means the adapter was connected, the
         // bolt marks where it was actually charging. Discharge needs no mark of its own
@@ -522,17 +557,25 @@ struct DashboardView: View {
         return max(60, Date().timeIntervalSince(first))
     }
 
-    /// Below five minutes the automatic tick interval drops under a minute, and
-    /// hour+minute then prints the same label at every tick (`11:51, 11:51, 11:51`).
-    /// Seconds appear only there, and the tick count drops with them so five full
-    /// timestamps don't collide in the popover's narrower plot.
+    /// Ticks anchor to fixed absolute times (strides), not to `.automatic`: automatic
+    /// ticks are regenerated for every window step, so their labels change content
+    /// every step and — with the step glide animating the change — sit permanently
+    /// mid-crossfade at "1 m". A strided tick's date never changes; the label glides
+    /// with the bars and only fades once, when it enters or leaves the window.
+    /// Seconds appear below a five-minute span, where the minute is no longer the
+    /// part that changes (`11:51, 11:51, 11:51` otherwise).
     private var timeAxis: some AxisContent {
         let fine = visibleSpan < 300
         let now = Date()
-        return AxisMarks(values: .automatic(desiredCount: fine ? 4 : 5)) { value in
-            // A tick landing on "now" sits on the plot's right edge, where the label is
-            // centred on the boundary and the trailing half is clipped away — it renders
-            // as a stray "1". Nothing is lost by dropping it: that edge is always now.
+        let stride: Double = fine ? 15 : max(60, (visibleSpan / 5 / 60).rounded() * 60)
+        let anchored = Swift.stride(
+            from: (now.timeIntervalSince1970 / stride).rounded(.down) * stride - visibleSpan,
+            through: (now.timeIntervalSince1970 / stride).rounded(.up) * stride,
+            by: stride
+        ).map { Date(timeIntervalSince1970: $0) }
+        return AxisMarks(values: anchored) { value in
+            // A tick within a step of "now" sits on the plot's right edge, where the
+            // label is centred on the boundary and its trailing half clips away.
             if let d = value.as(Date.self), now.timeIntervalSince(d) > visibleSpan * 0.04 {
                 AxisValueLabel(format: fine ? .dateTime.hour().minute().second()
                                             : .dateTime.hour().minute())
@@ -621,8 +664,8 @@ struct DashboardView: View {
     /// One block of a bar. Extracted because the inline form — three conditional
     /// segments inside a ForEach — makes the type-checker give up.
     private func bar(_ b: PowerBucket, _ lo: Double, _ hi: Double,
-                     _ color: Color, faded: Bool = false) -> some ChartContent {
-        let alpha: Double = faded ? (b.isPartial ? 0.18 : 0.4) : (b.isPartial ? 0.45 : 1)
+                     _ color: Color, faded: Bool = false, fade: Double = 1) -> some ChartContent {
+        let alpha: Double = (faded ? (b.isPartial ? 0.18 : 0.4) : (b.isPartial ? 0.45 : 1)) * fade
         return RectangleMark(
             xStart: .value("from", b.barStart), xEnd: .value("to", b.barEnd),
             yStart: .value("lo", lo), yEnd: .value("hi", max(lo, hi))
