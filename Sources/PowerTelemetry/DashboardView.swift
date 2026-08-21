@@ -1,11 +1,41 @@
 import SwiftUI
 import Charts
 
+/// A periodic schedule that can be switched off.
+///
+/// `TimelineSchedule` has no type eraser, so pausing can't mean swapping `.periodic`
+/// for a different schedule type — it has to be one type that stops handing out
+/// entries. That matters here: `MenuBarExtra` keeps its content view alive after the
+/// popover is dismissed, so an unpaused chart goes on redrawing at full rate into a
+/// window nobody can see, and the cost never comes back down.
+private struct PausableTimeline: TimelineSchedule {
+    let interval: TimeInterval
+    let paused: Bool
+
+    func entries(from startDate: Date, mode: TimelineScheduleMode) -> AnyIterator<Date> {
+        var next = startDate
+        return AnyIterator {
+            guard !paused else { return nil }
+            defer { next = next.addingTimeInterval(interval) }
+            return next
+        }
+    }
+}
+
 struct DashboardView: View {
     @EnvironmentObject private var store: PowerStore
     @Environment(\.openWindow) private var openWindow
     @State private var range: TimeRange = .hour
     @State private var hovered: PowerSample?
+    /// False while this copy of the dashboard is off screen — see `PausableTimeline`.
+    @State private var onScreen = false
+
+    /// Once per second, matching the sampler. The charts used to redraw at 5 Hz for a
+    /// smoother sliding axis; with bars anchored to absolute time there is nothing left
+    /// to interpolate between frames, so the extra four redraws bought nothing.
+    private var timeline: PausableTimeline {
+        PausableTimeline(interval: 1, paused: !onScreen)
+    }
 
     private enum TimeRange: String, CaseIterable {
         case minute = "1 m", hour = "1 h", fourHours = "4 h", all = "All"
@@ -44,33 +74,16 @@ struct DashboardView: View {
     private var rangeSamples: [PowerSample] {
         guard let cutoff = range.cutoff else { return store.samples }
         let since = Date().addingTimeInterval(-cutoff)
-        return store.samples.filter { $0.date >= since }
+        return store.samples.suffix(from: since)
     }
 
     /// The bars. For "All" the width scales with the session so it stays ~50 columns.
-    private var buckets: [PowerBucket] {
-        let samples = rangeSamples
+    private func bucket(_ samples: [PowerSample]) -> [PowerBucket] {
         var width = range.bucket
         if range == .all, let first = samples.first?.date, let last = samples.last?.date {
             width = max(1, (last.timeIntervalSince(first) / 50).rounded())
         }
         return samples.bucketed(width: width)
-    }
-
-    /// Samples inside the selected time range, downsampled to ≤600 points for rendering.
-    private var displaySamples: [PowerSample] {
-        var s = store.samples
-        if let cutoff = range.cutoff {
-            let since = Date().addingTimeInterval(-cutoff)
-            s = s.filter { $0.date >= since }
-        }
-        guard s.count > 600 else { return s }
-        let step = s.count / 600
-        var picked = stride(from: 0, to: s.count, by: step).map { s[$0] }
-        // stride can stop short of the newest sample — at the 12 h range that leaves the
-        // line trailing the metric cells by over a minute.
-        if let last = s.last, picked.last?.date != last.date { picked.append(last) }
-        return picked
     }
 
     /// Dynamic y-domain: data peak + 15% headroom, snapped to 5 W, floored at 10 W.
@@ -100,21 +113,35 @@ struct DashboardView: View {
             if store.unsupported {
                 unsupportedState
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    header
-                    metrics
-                        .padding(.bottom, 14)
-                    powerChart
-                    batteryChart
-                        .padding(.top, 12)
-                    footer
-                }
+                dashboard
             }
         }
         .padding(16)
+        .onAppear { onScreen = true }
         // The popover can be dismissed mid-hover without the charts seeing the pointer
         // leave; without this it would reopen pinned to a stale moment.
-        .onDisappear { hovered = nil }
+        .onDisappear { hovered = nil; onScreen = false }
+    }
+
+    /// Bucketing walks the whole retained history, and both charts draw the same bars.
+    /// Computing it here rather than inside each chart keeps it to one pass per redraw.
+    private var dashboard: some View {
+        let samples = rangeSamples
+        let bars = bucket(samples)
+        // Spans come from the full-resolution window, not from a downsample. Thinning
+        // the trace to ~600 points puts more than `maxGap` between neighbours at the
+        // long ranges, which reads as a sleep gap: every span shatters into fragments
+        // shorter than `minSpan` and the bands and lane silently disappear.
+        let spans = samples.chargeSpans()
+        return VStack(alignment: .leading, spacing: 0) {
+            header
+            metrics
+                .padding(.bottom, 14)
+            powerChart(bars)
+            batteryChart(bars, spans)
+                .padding(.top, 12)
+            footer
+        }
     }
 
     private var unsupportedState: some View {
@@ -282,8 +309,7 @@ struct DashboardView: View {
 
     // MARK: Charts
 
-    private var powerChart: some View {
-        let bars = buckets
+    private func powerChart(_ bars: [PowerBucket]) -> some View {
         let domain = yDomain(for: bars)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
@@ -308,7 +334,7 @@ struct DashboardView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Enlarge power flow chart")
             }
-            TimelineView(.periodic(from: .now, by: 0.2)) { context in
+            TimelineView(timeline) { context in
                 Chart { powerMarks(bars, domain: domain) }
                     .chartYScale(domain: domain)
                     .chartXScale(domain: xDomain(endingAt: context.date))
@@ -356,12 +382,10 @@ struct DashboardView: View {
         }
     }
 
-    private var batteryChart: some View {
-        let spans = displaySamples.chargeSpans()
-        let bars = buckets
-        return VStack(alignment: .leading, spacing: 8) {
+    private func batteryChart(_ bars: [PowerBucket], _ spans: [ChargeSpan]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             panelTitle("Battery level")
-            TimelineView(.periodic(from: .now, by: 0.2)) { context in
+            TimelineView(timeline) { context in
                 Chart { batteryMarks(spans, bars) }
                     // The domain reaches below zero to make room for the power lane.
                     // Drawing the lane inside the chart rather than as a view beneath it
