@@ -1,124 +1,99 @@
 # Power Telemetry
 
-Power Telemetry is a native macOS menu bar utility for monitoring live power flow on supported MacBooks.
+A native macOS menu bar utility for live power monitoring on Apple Silicon MacBooks.
 
-It reads power data directly from IOKit and displays adapter output, system load, battery charge or discharge power, and battery level. No administrator privileges, kernel extensions, background service, or network connection are required.
+It reads power data directly from IOKit — adapter output, system load, battery charge
+and discharge, battery level. No admin privileges, kernel extensions, background
+services, or network access.
 
 ## Features
 
-- Live wattage in the macOS menu bar, always showing the highest active power flow — adapter output, system load, or battery power — so the reading stays meaningful on battery
-- Adapter output, system load, and signed battery power at 1 Hz
-- Power drawn as bars per time slice, encoding all three flows in one shape (see [Reading the power chart](#reading-the-power-chart))
-- Battery level as bars in the macOS Battery-settings idiom: a lane beneath the chart marks when the adapter was connected, and the level turns red in the warning zone
-- Dynamic chart scale with a negotiated adapter-ceiling reference
-- Time ranges for the last 1 minute, 1 hour, 4 hours, or the current session
-- Hover any chart to scrub history: a crosshair pins that moment, a readout follows it, and the metric cells report its values
-- Smooth, continuously moving time axis
-- Resizable detailed window in addition to the menu bar popover
-- Native macOS controls and semantic system colors for Light and Dark appearances
-- VoiceOver labels for metrics and charts
+- Menu bar wattage showing the highest active power flow, with the bolt tinted by source — meaningful on battery, not just on AC
+- Power flow as bars, one bar carrying all three figures (see below)
+- Battery level in the style of macOS Battery settings, with an adapter lane and a red warning zone
+- Time ranges: 1 minute, 1 hour, 4 hours, or the whole session
+- Hover to scrub history; a crosshair and readout pin any moment
+- Negotiated adapter ceiling drawn as a reference line
+- Resizable detail window, Light/Dark appearance, VoiceOver labels
 - Up to 12 hours of in-memory history
 
 ## Installation
 
-Download the latest zip from [Releases](https://github.com/Inselite/PowerTelemetry/releases), extract it, and move `PowerTelemetry.app` to Applications.
+Download the latest zip from [Releases](https://github.com/Inselite/PowerTelemetry/releases),
+extract, and move `PowerTelemetry.app` to Applications.
 
-Current builds are ad-hoc signed and are not notarized by Apple. On first launch, macOS may require:
-
-1. Right-click `PowerTelemetry.app`
-2. Select **Open**
-3. Confirm **Open**
-
-The app runs in the menu bar and does not add a Dock icon.
+Builds are ad-hoc signed, not notarized: on first launch, right-click the app and
+choose **Open**. The app lives in the menu bar and adds no Dock icon.
 
 ## Compatibility
 
-Power Telemetry requires macOS 14 or later.
-
-The current implementation reads the `AppleSmartBattery` IOKit service and its `PowerTelemetryData`, `InstantAmperage`, and `AdapterDetails` fields.
+Requires macOS 14 or later. Reads the `AppleSmartBattery` IOKit service
+(`PowerTelemetryData`, `InstantAmperage`, `AdapterDetails`).
 
 | System | Status |
 |---|---|
-| Apple Silicon MacBook Pro used for development | Tested |
-| Other Apple Silicon MacBooks exposing the same IOKit fields | Expected to work, not yet broadly verified |
+| Apple Silicon MacBook Pro (development machine) | Tested |
+| Other Apple Silicon MacBooks | Expected to work, not broadly verified |
 | Intel MacBooks | Unknown; telemetry fields may differ |
-| Desktop Macs without a battery | Not supported; the app displays an unavailable state |
+| Desktop Macs without a battery | Not supported; shows an unavailable state |
 
-Compatibility reports are welcome. Include the Mac model, macOS version, and which metrics are missing or incorrect.
+Compatibility reports are welcome — include the Mac model, macOS version, and which
+metrics are missing or wrong.
 
-## Reading the power chart
+## Reading the charts
 
-Each bar is one slice of time. The three figures are not independent — the adapter's
-output splits into what the Mac is using and what is going into the battery:
+**Power flow.** The three figures are not independent:
 
 ```
 adapter output = system load + battery charge
 ```
 
-so a single bar carries all three without stacking unrelated quantities:
+so one bar carries all three:
 
 | Segment | Meaning |
 |---|---|
-| Orange | The part of the system load the adapter is supplying |
-| Blue | The part the battery is supplying — the load has outrun the adapter, or nothing is plugged in |
-| Green (cap on top) | Adapter output above the load: surplus charging the battery |
+| Orange | Load the adapter is supplying |
+| Blue | Load the battery is supplying — the load outran the adapter, or nothing is plugged in |
+| Green cap | Adapter surplus charging the battery |
 
-**The solid bar is always the system load**, whatever the state; only its colour changes
-to show who is paying for it. The green cap only appears while charging, so the full
-silhouette is adapter output when charging and system load otherwise. Direction is
-carried by colour rather than by sign, so the axis never needs to go below zero.
+The solid bar is always the system load; only its colour changes. Each bar keeps the
+busiest sample of its slice, so bursts survive. Bars align to absolute time and never
+move once drawn — new bars appear at the right. A dashed line marks the adapter
+ceiling once the load approaches it.
 
-Each bar takes the busiest sample in its slice rather than an average, so bursts survive.
-Slices align to absolute time, so a bar's edges never move once drawn — new bars appear
-at the right instead of every bar shifting. The newest bar is dimmed while it is still
-filling.
-
-A dashed line marks the negotiated adapter ceiling once the load comes within half of it.
-Its label sits at the left edge, on a chip: the right edge always carries the newest bars,
-so a label parked there would sit on data exactly when the ceiling matters most.
-
-## Reading the battery chart
-
-The battery panel follows macOS's own Battery settings chart.
+**Battery level.**
 
 | Mark | Meaning |
 |---|---|
-| Green bar | Battery level for that slice |
-| Red bar | Level in the warning zone, below 20% |
-| Shaded band | The adapter was connected |
-| Lane bar beneath the chart | The adapter was connected; a bolt marks where it was actually charging |
+| Green bar | Battery level |
+| Red bar | Below 20% |
+| Lane beneath the chart | Adapter connected; a bolt marks actual charging |
 
-Discharge has no mark of its own — it is the stretch where the lane underneath is empty
-and the level walks down. A run of level bars with nothing below them is the Mac running
-on its battery.
+Discharge has no mark of its own: it is the stretch where the lane is empty and the
+level walks down, as in macOS's own battery chart.
 
 ## Metrics
 
 | Metric | Meaning |
 |---|---|
-| Adapter output | Power currently entering the system from the connected adapter |
-| Adapter ceiling | Negotiated maximum adapter power, such as 140 W |
-| System load | Power consumed by the Mac, including CPU, GPU, ANE, memory, storage, display, and platform components |
-| Battery power | Positive values mean charging; negative values mean the battery is supplementing the adapter or powering the Mac |
-| Battery level | Current state of charge, including optimized-charging hold states when detectable |
+| Adapter output | Power entering the system from the adapter |
+| System load | Power the Mac is consuming (CPU, GPU, ANE, display, platform) |
+| Battery power | Positive: charging. Negative: the battery is supplying the Mac |
+| Battery level | State of charge |
 
-The values come from Apple's internal power telemetry and may differ slightly from measurements taken at the wall because of adapter conversion losses and sampling time.
-
-Power Telemetry samples at 1 Hz, but on the hardware tested `AppleSmartBattery` only
-refreshes its telemetry roughly every 14 seconds, holding each value in between. Charts
-are therefore honest staircases rather than smooth curves, and a change you cause can
-take up to ~14 seconds to appear.
+Values come from Apple's internal telemetry and can differ slightly from the wall
+because of conversion losses. The app samples at 1 Hz, but the sensor itself refreshes
+only every ~14 seconds — charts are honest staircases, and a change you cause can take
+that long to appear.
 
 ## Privacy
 
-All telemetry is read locally. Power Telemetry does not use the network and does not write measurement history to disk. Samples remain in memory and are discarded when the app exits.
+Everything is read locally and kept in memory only. No network, no files, nothing
+survives quitting the app.
 
 ## Build from source
 
-Requirements:
-
-- Xcode with the macOS SDK
-- Swift 5.9 or later
+Requires Xcode with the macOS SDK and Swift 5.9+.
 
 ```bash
 git clone https://github.com/Inselite/PowerTelemetry.git
@@ -127,23 +102,4 @@ cd PowerTelemetry
 open PowerTelemetry.app
 ```
 
-For development, open `Package.swift` in Xcode or run:
-
-```bash
-swift run
-```
-
-The icon can be regenerated from source with:
-
-```bash
-swift scripts/make_icon.swift .
-iconutil -c icns AppIcon.iconset
-```
-
-## Technical notes
-
-- Sampling interval: 1 second
-- Visual chart refresh: 5 Hz
-- Maximum retained history: 12 hours
-- Runtime dependencies: none
-- Elevated privileges: not required
+For development: `swift run`, or open `Package.swift` in Xcode. Tests: `swift test`.
