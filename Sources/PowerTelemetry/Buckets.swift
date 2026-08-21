@@ -40,9 +40,16 @@ struct PowerBucket: Identifiable {
 
     func contains(_ date: Date) -> Bool { date >= start && date < end }
 
-    /// Bar edges inset so neighbouring bars read as separate columns.
-    var barStart: Date { start.addingTimeInterval(end.timeIntervalSince(start) * 0.08) }
-    var barEnd: Date { end.addingTimeInterval(-end.timeIntervalSince(start) * 0.08) }
+    /// Fraction of the slice trimmed from each side. macOS's own battery chart draws
+    /// narrow columns with a clear gap rather than a near-solid block, which is what
+    /// lets you count bars and see a single slice against its neighbours.
+    static let inset = 0.2
+
+    /// Bar edges inset so neighbouring bars read as separate columns. The hit target
+    /// for scrubbing stays the full slice — see `contains(_:)` — so narrowing the bar
+    /// costs nothing in pointing accuracy.
+    var barStart: Date { start.addingTimeInterval(end.timeIntervalSince(start) * Self.inset) }
+    var barEnd: Date { end.addingTimeInterval(-end.timeIntervalSince(start) * Self.inset) }
 }
 
 extension Array where Element == PowerSample {

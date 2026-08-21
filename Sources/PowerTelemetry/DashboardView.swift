@@ -47,15 +47,21 @@ struct DashboardView: View {
             case .all: return nil
             }
         }
-        /// Bar width, chosen so every range lands near 50 columns — dense enough to
-        /// show shape, wide enough that a single bar stays a clickable target.
+        /// Every range is cut into the same number of columns, so a bar is the same
+        /// width whichever range is selected: switching from "1 h" to "4 h" changes
+        /// what a bar covers, not how the chart looks. Hard-coded widths used to give
+        /// 30 columns at "1 m" and 60 at "1 h", so bars visibly changed size.
+        ///
+        /// 50 is also the practical ceiling at the shortest range: it puts "1 m" at
+        /// 1.2 s per column, and a column narrower than the 1 Hz sample interval would
+        /// leave empty slices with no bar to draw.
+        static let columns = 50.0
+
+        /// Seconds per column. "All" has no fixed span, so it derives its own width
+        /// from the session — see `bucket(_:)`.
         var bucket: TimeInterval {
-            switch self {
-            case .minute: return 2
-            case .hour: return 60
-            case .fourHours: return 300
-            case .all: return 300
-            }
+            guard let cutoff else { return 0 }
+            return cutoff / Self.columns
         }
     }
 
@@ -77,11 +83,13 @@ struct DashboardView: View {
         return store.samples.suffix(from: since)
     }
 
-    /// The bars. For "All" the width scales with the session so it stays ~50 columns.
+    /// The bars. "All" scales its width with the session so it holds the same column
+    /// count as every other range, floored at a second — below the sample interval a
+    /// column can come up empty.
     private func bucket(_ samples: [PowerSample]) -> [PowerBucket] {
         var width = range.bucket
         if range == .all, let first = samples.first?.date, let last = samples.last?.date {
-            width = max(1, (last.timeIntervalSince(first) / 50).rounded())
+            width = max(1, (last.timeIntervalSince(first) / TimeRange.columns).rounded())
         }
         return samples.bucketed(width: width)
     }
